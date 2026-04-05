@@ -15,9 +15,30 @@ A flight and event alert system where users can login, set travel interests, and
 
 ### 1. Start Database Services
 
+**Option A: Docker Compose (recommended)**
 ```bash
 cd travel-scout
 docker-compose up -d
+```
+
+**Option B: Manual Docker**
+```bash
+# PostgreSQL
+docker run -d --name travel-scout-postgres \
+  -e POSTGRES_USER=travel_scout \
+  -e POSTGRES_PASSWORD=travel_scout_dev \
+  -e POSTGRES_DB=travel_scout \
+  -p 5432:5432 postgres:15-alpine
+
+# Redis
+docker run -d --name travel-scout-redis -p 6379:6379 redis:7-alpine
+```
+
+**Option C: Local installation**
+```bash
+# Install PostgreSQL 15+ and Redis 7+ locally
+# Create database: createdb travel_scout
+# Start redis-server
 ```
 
 ### 2. Backend Setup
@@ -31,11 +52,15 @@ cp .env.example .env
 # - RESEND_API_KEY
 # - JWT_SECRET_KEY
 
+# Using virtual environment (recommended)
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Backend runs on `http://localhost:8000`
+Backend runs on `http://localhost:8001`
 
 ### 3. Frontend Setup
 
@@ -52,7 +77,11 @@ Frontend runs on `http://localhost:3000`
 ### Current (MVP)
 - User registration and JWT authentication
 - Create and manage travel interests (origin, destination, budget)
-- Flight alert matching system
+- Flight alert matching system with multi-source search:
+  - Kiwi.com API (primary)
+  - Aviasales (secondary)
+  - Google Flights (fallback)
+  - Sample data (always-available fallback)
 - Telegram and email notification delivery
 - Dashboard with interests and alerts management
 

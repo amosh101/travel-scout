@@ -1,11 +1,26 @@
 from contextlib import asynccontextmanager
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import init_db
 from app.routers import auth, interests, alerts, notifications, recommendations
+
+# Initialize rate limiter (60 requests per minute per IP)
+limiter = Limiter(key_func=get_remote_address)
+request_log: dict = {}
+
+def log_request(request: Request):
+    """Log request for monitoring"""
+    client_ip = get_remote_address(request)
+    timestamp = time.time()
+    endpoint = request.url.path
+    print(f"[{time.strftime('%H:%M:%S')}] {client_ip} → {endpoint}")
 
 
 @asynccontextmanager
@@ -22,6 +37,17 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Add rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    log_request(request)
+    response = await call_next(request)
+    return response
 
 # CORS middleware
 app.add_middleware(

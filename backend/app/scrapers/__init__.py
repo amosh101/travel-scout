@@ -1,3 +1,3 @@
-from app.scrapers.flight_scraper import search_flights, search_flights_by_region, FlightOffer
+from app.scrapers.flight_scraper import search_flights, get_best_flight, search_multi_destination, FlightOffer
 
-__all__ = ["search_flights", "search_flights_by_region", "FlightOffer"]
+__all__ = ["search_flights", "get_best_flight", "search_multi_destination", "FlightOffer"]
