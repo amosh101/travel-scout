@@ -1,0 +1,37 @@
+{
+  "trip_type": "business",
+  "flight": {
+    "origin": "MPM",
+    "destination": "LHR",
+    "airline": "British Airways",
+    "price": 850,
+    "currency": "USD",
+    "depart_date": "2025-06-15",
+    "return_date": "2025-06-20",
+    "duration_minutes": 600,
+    "stops": 0,
+    "airline_rating": 4.2,
+    "booking_url": "https://www.britishairways.com/travel/home"
+  },
+  "hotel": {
+    "name": "The Savoy",
+    "price_per_night": 450,
+    "image_url": "https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800&q=80",
+    "distance_km": 2.1,
+    "rating": 4.8,
+    "booking_url": "https://www.fairmont.com/savoy-london/",
+    "address": "Strand, London WC2R 0EZ, UK"
+  },
+  "weather": {
+    "temp_high": 18,
+    "temp_low": 12,
+    "condition": "Light rain",
+    "humidity": 72,
+    "rain_chance": 60
+  },
+  "venue_name": "London Business District",
+  "venue_location": "City of London, UK",
+  "savings_analysis": "📈 Corporate rate saves 12% on standard pricing",
+  "best_booking_time": "📊 Book 4-6 weeks ahead for best business fares",
+  "send_packing_list": true
+}

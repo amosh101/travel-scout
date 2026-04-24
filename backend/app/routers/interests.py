@@ -30,6 +30,8 @@ async def create_interest(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    from datetime import date
+    
     interest = Interest(
         user_id=current_user.id,
         name=interest_data.name,
@@ -39,6 +41,9 @@ async def create_interest(
         max_budget=interest_data.max_budget,
         notification_channels=interest_data.notification_channels,
         active=interest_data.active,
+        date_flexibility=interest_data.date_flexibility,
+        preferred_departure_date=date.fromisoformat(interest_data.preferred_departure_date) if interest_data.preferred_departure_date else None,
+        preferred_return_date=date.fromisoformat(interest_data.preferred_return_date) if interest_data.preferred_return_date else None,
     )
     db.add(interest)
     await db.commit()

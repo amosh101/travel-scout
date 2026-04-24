@@ -1,0 +1,38 @@
+{
+  "trip_type": "f1",
+  "flight": {
+    "origin": "MPM",
+    "destination": "MIA",
+    "airline": "South African Airways",
+    "price": 1250,
+    "currency": "USD",
+    "depart_date": "2025-05-02",
+    "return_date": "2025-05-05",
+    "duration_minutes": 1020,
+    "stops": 2,
+    "airline_rating": 3.9,
+    "booking_url": "https://www.skyscanner.com/transport/flights/mpm/mia/250502/"
+  },
+  "hotel": {
+    "name": "Hyatt Regency Miami",
+    "price_per_night": 285,
+    "image_url": "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&q=80",
+    "distance_km": 12.5,
+    "rating": 4.2,
+    "booking_url": "https://www.booking.com/hotel/us/hyatt-regency-miami.html",
+    "address": "400 SE 2nd Ave, Miami, FL 33131"
+  },
+  "weather": {
+    "temp_high": 29,
+    "temp_low": 24,
+    "condition": "Partly cloudy",
+    "humidity": 65,
+    "rain_chance": 20
+  },
+  "event_name": "Formula 1 Miami Grand Prix 2025",
+  "venue_name": "Miami International Autodrome",
+  "venue_location": "Miami Gardens, FL",
+  "savings_analysis": "💰 You could save $180 by booking this weekend vs. next week",
+  "best_booking_time": "📊 Optimal booking window: 3-5 weeks before departure",
+  "send_packing_list": true
+}

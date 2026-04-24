@@ -37,6 +37,9 @@ class Interest(Base):
     max_budget = Column(Numeric(10, 2))
     notification_channels = Column(ARRAY(String), default=list)
     active = Column(Boolean, default=True)
+    date_flexibility = Column(String(20), default="plusminus3")  # exact, plusminus1, plusminus3, plusminus7, weekends
+    preferred_departure_date = Column(Date)
+    preferred_return_date = Column(Date)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     user = relationship("User", back_populates="interests")

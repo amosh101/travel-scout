@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from uuid import UUID
 from datetime import datetime, date
 from typing import Optional, List
@@ -42,6 +42,9 @@ class InterestCreate(BaseModel):
     max_budget: Optional[float] = None
     notification_channels: List[str] = ["telegram", "email"]
     active: bool = True
+    date_flexibility: Optional[str] = "plusminus3"
+    preferred_departure_date: Optional[str] = None
+    preferred_return_date: Optional[str] = None
 
 
 class InterestUpdate(BaseModel):
@@ -52,6 +55,9 @@ class InterestUpdate(BaseModel):
     max_budget: Optional[float] = None
     notification_channels: Optional[List[str]] = None
     active: Optional[bool] = None
+    date_flexibility: Optional[str] = None
+    preferred_departure_date: Optional[str] = None
+    preferred_return_date: Optional[str] = None
 
 
 class InterestResponse(BaseModel):
@@ -64,9 +70,62 @@ class InterestResponse(BaseModel):
     max_budget: Optional[float]
     notification_channels: List[str]
     active: bool
+    date_flexibility: Optional[str]
+    preferred_departure_date: Optional[date]
+    preferred_return_date: Optional[date]
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# Hotel Schemas for Rich Notifications
+class HotelInfo(BaseModel):
+    name: str
+    price_per_night: float
+    image_url: Optional[str] = None
+    distance_km: Optional[float] = None
+    rating: Optional[float] = Field(None, ge=0, le=5)
+    booking_url: Optional[str] = None
+    address: Optional[str] = None
+
+
+# Weather Schema
+class WeatherForecast(BaseModel):
+    temp_high: int
+    temp_low: int
+    condition: str
+    humidity: int = Field(..., ge=0, le=100)
+    rain_chance: int = Field(..., ge=0, le=100)
+
+
+# Flight Schemas for Rich Notifications
+class FlightDetails(BaseModel):
+    origin: str
+    destination: str
+    airline: str
+    price: float
+    currency: str = "USD"
+    depart_date: str
+    return_date: Optional[str] = None
+    duration_minutes: int = 0
+    stops: int = 0
+    airline_rating: Optional[float] = Field(None, ge=0, le=5)
+    booking_url: Optional[str] = None
+
+
+# Rich Itinerary Schema
+class RichItinerary(BaseModel):
+    trip_type: str = Field(default="leisure", pattern="^(f1|business|leisure|adventure|romance|family)$")
+    flight: FlightDetails
+    hotel: Optional[HotelInfo] = None
+    weather: Optional[WeatherForecast] = None
+    event_name: Optional[str] = None
+    venue_name: Optional[str] = None
+    venue_location: Optional[str] = None
+    total_cost: Optional[float] = None
+    savings_analysis: Optional[str] = None
+    best_booking_time: Optional[str] = None
+    send_packing_list: bool = True
 
 
 # Alert Schemas
