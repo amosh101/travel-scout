@@ -2,6 +2,20 @@
 
 A flight and event alert system where users can login, set travel interests, and receive Telegram/WhatsApp/Email notifications when deals match their preferences.
 
+## New: Neural Search Integration ✨
+
+Travel Scout now integrates with the **Neural Search System** for semantic event discovery. This enables natural language queries like:
+
+- "F1 races in Europe this summer"
+- "Hip hop concerts in London"
+- "Formula 1 British Grand Prix"
+
+The neural search system provides:
+- **Semantic understanding**: Finds relevant events even without exact keyword matches
+- **Multi-source indexing**: Searches across F1 calendars, concert listings, venue sites
+- **Automatic failover**: Falls back to scrapers if neural results are insufficient
+- **Zero API costs**: Fully local, no external search API fees
+
 ## Tech Stack
 
 - **Backend**: Python FastAPI (async)
@@ -9,7 +23,7 @@ A flight and event alert system where users can login, set travel interests, and
 - **Frontend**: Next.js 14 (App Router, TypeScript)
 - **Auth**: JWT-based authentication
 - **Notifications**: Telegram Bot API, Resend (email), WhatsApp (placeholder)
-- **AI Integration**: MiroFish Swarm Intelligence (placeholder for future)
+- **AI/Search**: Neural Search System (local vector search with ChromaDB + Sentence Transformers)
 
 ## Quick Start
 
@@ -72,6 +86,69 @@ npm run dev
 
 Frontend runs on `http://localhost:3000`
 
+## Neural Search CLI Commands
+
+The new neural search CLI tools are available at the project root:
+
+### Search Events
+```bash
+# Search for F1 races
+python search_events.py "F1 races" --limit 10
+
+# Search concerts with filters
+python search_events.py "hip hop concerts" --location "London" --date-from 2026-06-01 --date-to 2026-08-31
+
+# Search with event type filter
+python search_events.py "Formula 1" --type f1 --json
+
+# Save results to file
+python search_events.py "music festivals" --save festivals.json
+```
+
+### Build Itinerary
+```bash
+# Build complete trip itinerary
+python build_itinerary.py --event "F1 British GP" --dates "2026-07-18:2026-07-20" --origin "Maputo"
+
+# With interests and budget
+python build_itinerary.py --event "concerts" --dates "2026-06-01:2026-06-05" --interests "rock,indie" --budget mid
+
+# Save to file
+python build_itinerary.py --event "Silverstone" --dates "2026-07-18" --save silverstone_trip.json
+```
+
+### Python API Usage
+
+```python
+from event_search import EventSearcher, search_events
+from itinerary_builder import ItineraryBuilder
+
+# Event search
+results = search_events(
+    query="F1 races",
+    location="Europe",
+    date_from="2026-06-01",
+    date_to="2026-08-31",
+    event_type="f1",
+    limit=10
+)
+
+# Specialized searches
+searcher = EventSearcher()
+concerts = searcher.search_concerts(location="London", genre="hip hop")
+f1_races = searcher.search_f1_races(location="Europe")
+sports = searcher.search_sports(location="Madrid", sport_type="football")
+
+# Build itinerary
+itinerary = create_itinerary(
+    event_query="F1 British GP",
+    dates="2026-07-18:2026-07-20",
+    origin="Maputo",
+    interests=["F1", "motorsport"],
+    budget_level="mid"
+)
+```
+
 ## Features
 
 ### Current (MVP)
@@ -85,6 +162,14 @@ Frontend runs on `http://localhost:3000`
 - Telegram and email notification delivery
 - Dashboard with interests and alerts management
 
+### Neural Search Features (New)
+- **Semantic event search**: Natural language queries for events
+- **Event type filtering**: concerts, F1, sports, festivals
+- **Date range filtering**: Find events within specific dates
+- **Location-based search**: Filter by city, region, or country
+- **Itinerary builder**: Combines events + flights + hotels
+- **Cost estimation**: Breaks down total trip costs
+
 ### Planned (AI-Powered)
 - Natural language interest input ("I want to go to Europe under $500")
 - Smart deal scoring using MiroFish swarm intelligence
@@ -93,6 +178,7 @@ Frontend runs on `http://localhost:3000`
 
 ## API Endpoints
 
+### Core Endpoints
 | Endpoint | Description |
 |----------|-------------|
 | `POST /api/auth/register` | Create account |
@@ -104,26 +190,78 @@ Frontend runs on `http://localhost:3000`
 | `DELETE /api/interests/{id}` | Remove interest |
 | `GET /api/alerts` | List matched alerts |
 | `POST /api/notifications/test` | Send test notification |
-| `POST /api/ai/parse-interest` | Parse natural language (placeholder) |
-| `POST /api/ai/score-deals` | AI score deals (placeholder) |
-| `GET /api/ai/predict-window/{destination}` | Predict booking window (placeholder) |
 
-## MiroFish AI Integration
+### Neural Search Endpoints (New)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/neural/health` | Neural search system status |
+| `POST /api/neural/events/search` | Search events with neural search |
+| `GET /api/neural/events/concerts` | Search concerts by location/genre |
+| `GET /api/neural/events/f1` | Search F1 races |
+| `GET /api/neural/events/sports` | Search sports events |
+| `GET /api/neural/events/festivals` | Search festivals |
+| `POST /api/neural/itinerary/build` | Build complete itinerary |
+| `POST /api/neural/unified/search` | Unified search (neural + scrapers) |
 
-This project includes a placeholder for MiroFish Swarm Intelligence integration:
+### AI Endpoints (Placeholder)
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/ai/parse-interest` | Parse natural language |
+| `POST /api/ai/score-deals` | AI score deals |
+| `GET /api/ai/predict-window/{destination}` | Predict booking window |
 
-- **Location**: `backend/app/services/ai_recommendations.py`
-- **Current**: Simple rule-based matching
-- **Future**: Connect to MiroFish (localhost:5001) for:
-  - Natural language interest parsing
-  - Multi-factor deal scoring (airline reliability, weather, events)
-  - Predictive price analysis
-  - Personalized itinerary generation
+## Neural Search Architecture
 
-To enable MiroFish integration in the future:
-1. Start MiroFish via Docker: `docker-compose -f MiroFish/docker-compose.yml up -d`
-2. Update `ai_recommendations.py` to set `self.enabled = True`
-3. Update endpoints to call MiroFish APIs
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Travel Scout Bot                         │
+├─────────────────────────────────────────────────────────────┤
+│  CLI Tools:         Backend API:         Frontend:          │
+│  - search_events.py  - neural_search.py   - Dashboard      │
+│  - build_itinerary  - /api/neural/*      - Event Search    │
+│                                                           │
+│  Python API:        - /events/search      - Itinerary Builder│
+│  - EventSearcher    - /itinerary/build                    │
+│  - ItineraryBuilder                                       │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Neural Integration                       │
+├─────────────────────────────────────────────────────────────┤
+│  Search Router → Search Orchestrator → Neural Client       │
+│       │                                                │
+│       ▼                                                │
+│  ┌─────────┐    ┌─────────────┐    ┌──────────────┐   │
+│  │Scrapers │◄───│  Fallback   │    │Vector Search │   │
+│  │(Flights│    │  Logic      │───►│  (ChromaDB)  │   │
+│  │ Hotels)│    │             │    └──────────────┘   │
+│  └─────────┘    └─────────────┘          │            │
+│                                           ▼            │
+│                              ┌────────────────────────┐  │
+│                              │  Embedding Engine      │  │
+│                              │  (sentence-transformers)│  │
+│                              └────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Neural Search Configuration
+
+The neural search system is configured in `neural-integration/travel_scout/config/search_config.json`:
+
+```json
+{
+  "primary_search": "neural",
+  "fallback_enabled": true,
+  "neural_threshold": 3,
+  "staleness_days": 7,
+  "collections": ["web", "events", "travel_data"]
+}
+```
+
+- **neural_threshold**: Minimum results before fallback to scrapers
+- **staleness_days**: Maximum age of neural results before refresh
+- **fallback_enabled**: Allow scraper fallback when neural results insufficient
 
 ## Project Structure
 
@@ -131,22 +269,48 @@ To enable MiroFish integration in the future:
 travel-scout/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py           # FastAPI entry
-│   │   ├── config.py         # Settings
-│   │   ├── database.py       # SQLAlchemy setup
-│   │   ├── models/           # SQLAlchemy models
-│   │   ├── routers/          # API endpoints
-│   │   ├── services/         # Business logic
-│   │   ├── scrapers/         # Flight/Event collectors
-│   │   └── notifications/    # Telegram/Email dispatch
+│   │   ├── main.py              # FastAPI entry (now with neural router)
+│   │   ├── routers/
+│   │   │   ├── auth.py
+│   │   │   ├── interests.py
+│   │   │   ├── alerts.py
+│   │   │   ├── notifications.py
+│   │   │   ├── recommendations.py
+│   │   │   └── neural_search.py  # NEW: Neural search endpoints
+│   │   ├── services/
+│   │   ├── scrapers/
+│   │   └── notifications/
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
-│   ├── app/                  # Next.js App Router
-│   ├── components/
-│   ├── lib/
-│   └── package.json
-└── docker-compose.yml        # PostgreSQL + Redis
+│   └── app/
+├── neural-integration/         # NEW: Neural search integration
+│   └── travel_scout/
+│       ├── search_router.py      # Main search interface
+│       ├── search_orchestrator.py # Routing logic
+│       ├── neural_client.py      # Neural search client
+│       └── index_sync.py         # Data sync to neural index
+├── search_events.py             # NEW: Event search CLI
+├── build_itinerary.py           # NEW: Itinerary builder CLI
+├── event_search.py              # NEW: Event search module
+├── itinerary_builder.py         # NEW: Itinerary module
+├── docker-compose.yml
+└── README.md
+```
+
+## Neural Search Data Sources
+
+The neural search system indexes content from:
+- **F1 Calendar**: Official Formula 1 race schedules
+- **Concert Listings**: Music event listings
+- **Venue Information**: Event venue details
+- **Travel Sites**: Flight and hotel information
+
+To add new sources:
+```bash
+cd /home/ubuntu/.openclaw/workspace/projects/neural-search
+./neural_index.py url <url> --collection web
+./neural_index.py rss <feed_url> --collection news
 ```
 
 ## License

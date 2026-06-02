@@ -35,3 +35,43 @@ Thumbs.db
 # Next.js
 .next/
 out/
+
+# Runtime artifacts (added 2026-06-02 during OpenClaw→Hermes migration)
+.env
+.env.local
+.env.*.local
+*.log
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.so.*
+node_modules/
+venv/
+.venv/
+.venv-*/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.next/
+dist/
+build/
+htmlcov/
+.coverage
+*.egg-info/
+*.parquet
+*.arrow
+*.feather
+pipeline_results.json
+polymarket/monitors/arb_opportunities.json
+polymarket/monitors/arb_report.txt
+polymarket/monitors/mirofish_analysis.json
+polymarket/monitors/news_data.json
+polymarket/monitors/news_report.txt
+
+# Itinerary outputs (regenerated, not source)
+itineraries/*.md
+backend/sample_itinerary_*.json

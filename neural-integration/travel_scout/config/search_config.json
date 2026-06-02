@@ -1,0 +1,46 @@
+{
+  "primary_search": "neural",
+  "fallback_enabled": true,
+  "neural_threshold": 3,
+  "staleness_days": 7,
+  "collections": ["web", "events", "travel_data"],
+  "auto_index": true,
+  "index_schedule": "daily",
+  "index_time": "02:00",
+  "metrics_enabled": true,
+  "ab_test_enabled": false,
+  "cache_enabled": true,
+  "cache_ttl_seconds": 300,
+  "neural_search": {
+    "db_path": "/home/ubuntu/.openclaw/neural_search_db",
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "default_limit": 10,
+    "default_threshold": 0.3,
+    "rerank_enabled": true
+  },
+  "scraper": {
+    "timeout_seconds": 30,
+    "max_retries": 3,
+    "rate_limit_per_second": 1.0,
+    "proxy_rotation": true
+  },
+  "quality_metrics": {
+    "min_result_score": 0.5,
+    "max_latency_ms": 5000,
+    "track_user_feedback": true
+  },
+  "collections_config": {
+    "web": {
+      "description": "General web content including venues and attractions",
+      "priority": 1
+    },
+    "events": {
+      "description": "Event listings and concerts",
+      "priority": 2
+    },
+    "travel_data": {
+      "description": "Travel Scout scraper output data",
+      "priority": 3
+    }
+  }
+}

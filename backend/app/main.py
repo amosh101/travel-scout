@@ -11,6 +11,12 @@ from app.config import settings
 from app.database import init_db
 from app.routers import auth, interests, alerts, notifications, recommendations
 
+try:
+    from app.routers import neural_search
+    NEURAL_ROUTER_AVAILABLE = True
+except ImportError:
+    NEURAL_ROUTER_AVAILABLE = False
+
 # Initialize rate limiter (60 requests per minute per IP)
 limiter = Limiter(key_func=get_remote_address)
 request_log: dict = {}
@@ -70,6 +76,13 @@ app.include_router(alerts.router)
 app.include_router(notifications.router)
 app.include_router(recommendations.router)
 
+# Include neural search router if available
+if NEURAL_ROUTER_AVAILABLE:
+    app.include_router(neural_search.router)
+    print("✓ Neural search router enabled")
+else:
+    print("⚠ Neural search router not available")
+
 
 @app.get("/")
 async def root():
@@ -78,7 +91,10 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "neural_search": NEURAL_ROUTER_AVAILABLE
+    }
 
 
 if __name__ == "__main__":
