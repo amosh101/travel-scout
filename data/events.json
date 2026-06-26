@@ -1,0 +1,1000 @@
+[
+  {
+    "id": "f1-australian-grand-prix-2026",
+    "name": "Australian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Melbourne",
+    "country": "AU",
+    "venue": "Albert Park Grand Prix Circuit",
+    "start_date": "2026-03-08",
+    "end_date": "2026-03-08",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "oceania"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Australian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Albert_Park_Circuit"
+  },
+  {
+    "id": "f1-chinese-grand-prix-2026",
+    "name": "Chinese Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Shanghai",
+    "country": "CN",
+    "venue": "Shanghai International Circuit",
+    "start_date": "2026-03-15",
+    "end_date": "2026-03-15",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "asia"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Chinese_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Shanghai_International_Circuit"
+  },
+  {
+    "id": "uffizi-botticelli-2026",
+    "name": "Uffizi — Botticelli & the Birth of the Renaissance 2026",
+    "type": "art_exhibition",
+    "city": "Florence",
+    "country": "IT",
+    "venue": "Galleria degli Uffizi",
+    "start_date": "2026-03-15",
+    "end_date": "2026-10-31",
+    "interest_tags": [
+      "renaissance",
+      "art",
+      "italy",
+      "botticelli"
+    ],
+    "source": "Uffizi (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Uffizi",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "fifa-wc-qualifiers-2026",
+    "name": "FIFA World Cup 2026 — Final Qualifying Playoffs",
+    "type": "sports_event",
+    "city": "Multiple cities",
+    "country": "EU",
+    "venue": "Various stadiums",
+    "start_date": "2026-03-26",
+    "end_date": "2026-03-31",
+    "interest_tags": [
+      "football",
+      "world_cup",
+      "fifa"
+    ],
+    "source": "FIFA World Cup 2026 (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/FIFA_World_Cup_2026",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-japanese-grand-prix-2026",
+    "name": "Japanese Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Suzuka",
+    "country": "JP",
+    "venue": "Suzuka Circuit",
+    "start_date": "2026-03-29",
+    "end_date": "2026-03-29",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "asia"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Japanese_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Suzuka_International_Racing_Course"
+  },
+  {
+    "id": "uffizi-david-tour-2026",
+    "name": "Uffizi Gallery — David & Renaissance Masters Guided Tour 2026",
+    "type": "art_exhibition",
+    "city": "Florence",
+    "country": "IT",
+    "venue": "Galleria degli Uffizi",
+    "start_date": "2026-04-01",
+    "end_date": "2026-12-31",
+    "interest_tags": [
+      "renaissance",
+      "art",
+      "italy",
+      "guided_tour"
+    ],
+    "source": "Uffizi Gallery official site",
+    "source_url": "https://www.uffizi.it/en",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "salone-del-mobile-2026",
+    "name": "Salone del Mobile.Milano 2026",
+    "type": "design",
+    "city": "Milan",
+    "country": "IT",
+    "venue": "Fiera Milano Rho",
+    "start_date": "2026-04-21",
+    "end_date": "2026-04-26",
+    "interest_tags": [
+      "design",
+      "furniture",
+      "italy"
+    ],
+    "source": "Salone del Mobile (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Salone_del_Mobile",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-miami-grand-prix-2026",
+    "name": "Miami Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Miami",
+    "country": "US",
+    "venue": "Miami International Autodrome",
+    "start_date": "2026-05-03",
+    "end_date": "2026-05-03",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Miami_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Miami_International_Autodrome"
+  },
+  {
+    "id": "f1-canadian-grand-prix-2026",
+    "name": "Canadian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Montreal",
+    "country": "CA",
+    "venue": "Circuit Gilles Villeneuve",
+    "start_date": "2026-05-24",
+    "end_date": "2026-05-24",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Canadian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_Gilles_Villeneuve"
+  },
+  {
+    "id": "venice-arch-biennale-2026",
+    "name": "Venice Architecture Biennale 2026",
+    "type": "design",
+    "city": "Venice",
+    "country": "IT",
+    "venue": "Giardini & Arsenale",
+    "start_date": "2026-05-30",
+    "end_date": "2026-11-23",
+    "interest_tags": [
+      "architecture",
+      "design",
+      "art",
+      "italy"
+    ],
+    "source": "Venice Architecture Biennale (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Venice_Architecture_Biennale",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "primavera-sound-2026",
+    "name": "Primavera Sound Barcelona 2026",
+    "type": "music_festival",
+    "city": "Barcelona",
+    "country": "ES",
+    "venue": "Parc del Fòrum",
+    "start_date": "2026-06-04",
+    "end_date": "2026-06-06",
+    "interest_tags": [
+      "indie",
+      "music_festival",
+      "iberia"
+    ],
+    "source": "Primavera Sound official site",
+    "source_url": "https://www.primaverasound.com/",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-monaco-grand-prix-2026",
+    "name": "Monaco Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Monte Carlo",
+    "country": "MC",
+    "venue": "Circuit de Monaco",
+    "start_date": "2026-06-07",
+    "end_date": "2026-06-07",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "luxury"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Monaco_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_de_Monaco"
+  },
+  {
+    "id": "london-design-biennale-2026",
+    "name": "London Design Biennale 2026",
+    "type": "design",
+    "city": "London",
+    "country": "GB",
+    "venue": "Somerset House",
+    "start_date": "2026-06-10",
+    "end_date": "2026-07-05",
+    "interest_tags": [
+      "design",
+      "art",
+      "uk"
+    ],
+    "source": "London Design Biennale (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/London_Design_Biennale",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-barcelona-grand-prix-2026",
+    "name": "Barcelona Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Montmeló",
+    "country": "ES",
+    "venue": "Circuit de Barcelona-Catalunya",
+    "start_date": "2026-06-14",
+    "end_date": "2026-06-14",
+    "interest_tags": [
+      "f1",
+      "motorsport"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Spanish_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_de_Barcelona-Catalunya"
+  },
+  {
+    "id": "bordeaux-wine-fest-2026",
+    "name": "Bordeaux Wine Festival 2026",
+    "type": "food_wine",
+    "city": "Bordeaux",
+    "country": "FR",
+    "venue": "Quais de la Garonne",
+    "start_date": "2026-06-18",
+    "end_date": "2026-06-21",
+    "interest_tags": [
+      "wine",
+      "food",
+      "france"
+    ],
+    "source": "Bordeaux (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Bordeaux",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "glastonbury-2026",
+    "name": "Glastonbury Festival 2026",
+    "type": "music_festival",
+    "city": "Pilton",
+    "country": "GB",
+    "venue": "Worthy Farm",
+    "start_date": "2026-06-24",
+    "end_date": "2026-06-28",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "uk"
+    ],
+    "source": "Glastonbury Festivals official site",
+    "source_url": "https://www.glastonburyfestivals.co.uk/",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "roskilde-2026",
+    "name": "Roskilde Festival 2026",
+    "type": "music_festival",
+    "city": "Roskilde",
+    "country": "DK",
+    "venue": "Dyrskuepladsen",
+    "start_date": "2026-06-27",
+    "end_date": "2026-07-04",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "scandinavia"
+    ],
+    "source": "Roskilde Festival official site",
+    "source_url": "https://www.roskilde-festival.dk/",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-austrian-grand-prix-2026",
+    "name": "Austrian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Spielberg",
+    "country": "AT",
+    "venue": "Red Bull Ring",
+    "start_date": "2026-06-28",
+    "end_date": "2026-06-28",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "alps"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Austrian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Red_Bull_Ring"
+  },
+  {
+    "id": "montreux-jazz-headliner-1",
+    "name": "Montreux Jazz Festival 2026 — Opening Headliner",
+    "type": "music_festival",
+    "city": "Montreux",
+    "country": "CH",
+    "venue": "Auditorium Stravinski",
+    "start_date": "2026-07-03",
+    "end_date": "2026-07-03",
+    "interest_tags": [
+      "jazz",
+      "music_festival",
+      "switzerland"
+    ],
+    "source": "Montreux Jazz Festival official site",
+    "source_url": "https://www.montreuxjazzfestival.com/en/festival",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "wireless-2026",
+    "name": "Wireless Festival 2026",
+    "type": "music_festival",
+    "city": "London",
+    "country": "GB",
+    "venue": "Finsbury Park",
+    "start_date": "2026-07-03",
+    "end_date": "2026-07-05",
+    "interest_tags": [
+      "hip_hop",
+      "music_festival",
+      "uk"
+    ],
+    "source": "Wireless Festival (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Wireless_Festival",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-british-grand-prix-2026",
+    "name": "British Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Silverstone",
+    "country": "GB",
+    "venue": "Silverstone Circuit",
+    "start_date": "2026-07-05",
+    "end_date": "2026-07-05",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "uk"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_British_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Silverstone_Circuit"
+  },
+  {
+    "id": "tomorrowland-2026",
+    "name": "Tomorrowland 2026",
+    "type": "music_festival",
+    "city": "Boom",
+    "country": "BE",
+    "venue": "De Schorre",
+    "start_date": "2026-07-17",
+    "end_date": "2026-07-19",
+    "interest_tags": [
+      "edm",
+      "music_festival",
+      "belgium"
+    ],
+    "source": "Tomorrowland official site",
+    "source_url": "https://www.tomorrowland.com/en/festival/welcome",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "lolla-paris-2026",
+    "name": "Lollapalooza Paris 2026",
+    "type": "music_festival",
+    "city": "Paris",
+    "country": "FR",
+    "venue": "Hippodrome de Longchamp",
+    "start_date": "2026-07-18",
+    "end_date": "2026-07-20",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "france"
+    ],
+    "source": "Lollapalooza Paris official site",
+    "source_url": "https://www.lollaparis.com/",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "montreux-jazz-headliner-2",
+    "name": "Montreux Jazz Festival 2026 — Closing Weekend Headliner",
+    "type": "music_festival",
+    "city": "Montreux",
+    "country": "CH",
+    "venue": "Auditorium Stravinski",
+    "start_date": "2026-07-18",
+    "end_date": "2026-07-18",
+    "interest_tags": [
+      "jazz",
+      "music_festival",
+      "switzerland"
+    ],
+    "source": "Montreux Jazz Festival (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Montreux_Jazz_Festival",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-belgian-grand-prix-2026",
+    "name": "Belgian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Spa",
+    "country": "BE",
+    "venue": "Circuit de Spa-Francorchamps",
+    "start_date": "2026-07-19",
+    "end_date": "2026-07-19",
+    "interest_tags": [
+      "f1",
+      "motorsport"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Belgian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_de_Spa-Francorchamps"
+  },
+  {
+    "id": "tomorrowland-w2-2026",
+    "name": "Tomorrowland 2026 — Weekend 2",
+    "type": "music_festival",
+    "city": "Boom",
+    "country": "BE",
+    "venue": "De Schorre",
+    "start_date": "2026-07-24",
+    "end_date": "2026-07-26",
+    "interest_tags": [
+      "edm",
+      "music_festival",
+      "belgium"
+    ],
+    "source": "Tomorrowland official site",
+    "source_url": "https://www.tomorrowland.com/en/festival/welcome",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-hungarian-grand-prix-2026",
+    "name": "Hungarian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Mogyoród",
+    "country": "HU",
+    "venue": "Hungaroring",
+    "start_date": "2026-07-26",
+    "end_date": "2026-07-26",
+    "interest_tags": [
+      "f1",
+      "motorsport"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Hungarian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Hungaroring"
+  },
+  {
+    "id": "sziget-2026",
+    "name": "Sziget Festival 2026",
+    "type": "music_festival",
+    "city": "Budapest",
+    "country": "HU",
+    "venue": "Óbuda Island",
+    "start_date": "2026-08-12",
+    "end_date": "2026-08-17",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "central_europe"
+    ],
+    "source": "Sziget (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Sziget_Festival",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "pukkelpop-2026",
+    "name": "Pukkelpop 2026",
+    "type": "music_festival",
+    "city": "Kiewit",
+    "country": "BE",
+    "venue": "Festivalterrein Kiewit",
+    "start_date": "2026-08-20",
+    "end_date": "2026-08-23",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "belgium"
+    ],
+    "source": "Pukkelpop (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Pukkelpop",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-dutch-grand-prix-2026",
+    "name": "Dutch Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Zandvoort",
+    "country": "NL",
+    "venue": "Circuit Park Zandvoort",
+    "start_date": "2026-08-23",
+    "end_date": "2026-08-23",
+    "interest_tags": [
+      "f1",
+      "motorsport"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Dutch_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_Zandvoort"
+  },
+  {
+    "id": "yoga-retreat-bali-2026",
+    "name": "Ubud Yoga & Meditation Retreat 2026",
+    "type": "wellness",
+    "city": "Ubud",
+    "country": "ID",
+    "venue": "Fivelements Retreat Bali",
+    "start_date": "2026-09-05",
+    "end_date": "2026-09-12",
+    "interest_tags": [
+      "yoga",
+      "wellness",
+      "retreat",
+      "asia"
+    ],
+    "source": "Yoga (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Yoga",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-italian-grand-prix-2026",
+    "name": "Italian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Monza",
+    "country": "IT",
+    "venue": "Autodromo Nazionale di Monza",
+    "start_date": "2026-09-06",
+    "end_date": "2026-09-06",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "italy"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Italian_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Monza_Circuit"
+  },
+  {
+    "id": "chianti-classico-expo-2026",
+    "name": "Chianti Classico Expo 2026",
+    "type": "food_wine",
+    "city": "Greve in Chianti",
+    "country": "IT",
+    "venue": "Piazza Matteotti",
+    "start_date": "2026-09-10",
+    "end_date": "2026-09-13",
+    "interest_tags": [
+      "wine",
+      "food",
+      "tuscany",
+      "italy"
+    ],
+    "source": "Chianti (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Chianti_(wine)",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "prosciutto-parma-fest-2026",
+    "name": "Prosciutto di Parma Festival 2026",
+    "type": "food_wine",
+    "city": "Parma",
+    "country": "IT",
+    "venue": "Centro Storico",
+    "start_date": "2026-09-12",
+    "end_date": "2026-09-20",
+    "interest_tags": [
+      "prosciutto",
+      "food",
+      "emilia",
+      "italy"
+    ],
+    "source": "Prosciutto di Parma (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Prosciutto_di_Parma",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-spanish-grand-prix-2026",
+    "name": "Spanish Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Madrid",
+    "country": "ES",
+    "venue": "Madring",
+    "start_date": "2026-09-13",
+    "end_date": "2026-09-13",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "iberia"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Spanish_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Madring"
+  },
+  {
+    "id": "ucl-groupstage-md1-2026",
+    "name": "UEFA Champions League 2026/27 — Matchday 1",
+    "type": "sports_event",
+    "city": "Multiple cities",
+    "country": "EU",
+    "venue": "Various stadiums",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-16",
+    "interest_tags": [
+      "football",
+      "champions_league",
+      "uefa"
+    ],
+    "source": "UEFA Champions League (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Champions_League",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "rock-in-rio-2026",
+    "name": "Rock in Rio 2026",
+    "type": "music_festival",
+    "city": "Rio de Janeiro",
+    "country": "BR",
+    "venue": "Cidade do Rock — Parque Olímpico",
+    "start_date": "2026-09-25",
+    "end_date": "2026-10-04",
+    "interest_tags": [
+      "rock",
+      "music_festival",
+      "south_america"
+    ],
+    "source": "Rock in Rio (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Rock_in_Rio",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-azerbaijan-grand-prix-2026",
+    "name": "Azerbaijan Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Baku",
+    "country": "AZ",
+    "venue": "Baku City Circuit",
+    "start_date": "2026-09-26",
+    "end_date": "2026-09-26",
+    "interest_tags": [
+      "f1",
+      "motorsport"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Azerbaijan_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Baku_City_Circuit"
+  },
+  {
+    "id": "el-clasico-sep-2026",
+    "name": "El Clásico — La Liga September 2026",
+    "type": "sports_event",
+    "city": "Madrid",
+    "country": "ES",
+    "venue": "Santiago Bernabéu",
+    "start_date": "2026-09-27",
+    "end_date": "2026-09-27",
+    "interest_tags": [
+      "football",
+      "el_clasico",
+      "la_liga",
+      "iberia"
+    ],
+    "source": "El Clásico (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/El_Cl%C3%A1sico",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "alba-truffle-fair-2026",
+    "name": "International White Truffle Fair of Alba 2026",
+    "type": "food_wine",
+    "city": "Alba",
+    "country": "IT",
+    "venue": "Cortile della Maddalena",
+    "start_date": "2026-10-10",
+    "end_date": "2026-12-08",
+    "interest_tags": [
+      "truffle",
+      "food",
+      "piedmont",
+      "italy"
+    ],
+    "source": "White truffle (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/White_truffle",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-singapore-grand-prix-2026",
+    "name": "Singapore Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Singapore",
+    "country": "SG",
+    "venue": "Marina Bay Street Circuit",
+    "start_date": "2026-10-11",
+    "end_date": "2026-10-11",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "asia",
+      "night_race"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Singapore_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Marina_Bay_Street_Circuit"
+  },
+  {
+    "id": "wsl-2026",
+    "name": "WSL Championship Tour — European Leg 2026",
+    "type": "wellness",
+    "city": "Peniche",
+    "country": "PT",
+    "venue": "Supertubos Beach",
+    "start_date": "2026-10-12",
+    "end_date": "2026-10-22",
+    "interest_tags": [
+      "surf",
+      "wellness",
+      "ocean",
+      "sport"
+    ],
+    "source": "World Surf League official site",
+    "source_url": "https://www.worldsurfleague.com/",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "el-clasico-oct-2026",
+    "name": "El Clásico — La Liga October 2026",
+    "type": "sports_event",
+    "city": "Barcelona",
+    "country": "ES",
+    "venue": "Spotify Camp Nou",
+    "start_date": "2026-10-25",
+    "end_date": "2026-10-25",
+    "interest_tags": [
+      "football",
+      "el_clasico",
+      "la_liga",
+      "iberia"
+    ],
+    "source": "El Clásico (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/El_Cl%C3%A1sico",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "f1-united-states-grand-prix-2026",
+    "name": "United States Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Austin",
+    "country": "US",
+    "venue": "Circuit of the Americas",
+    "start_date": "2026-10-25",
+    "end_date": "2026-10-25",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_United_States_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Circuit_of_the_Americas"
+  },
+  {
+    "id": "f1-mexico-city-grand-prix-2026",
+    "name": "Mexico City Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Mexico City",
+    "country": "MX",
+    "venue": "Autódromo Hermanos Rodríguez",
+    "start_date": "2026-11-01",
+    "end_date": "2026-11-01",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Mexico_City_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Aut%C3%B3dromo_Hermanos_Rodr%C3%ADguez"
+  },
+  {
+    "id": "f1-brazilian-grand-prix-2026",
+    "name": "Brazilian Grand Prix 2026",
+    "type": "f1_race",
+    "city": "São Paulo",
+    "country": "BR",
+    "venue": "Autódromo José Carlos Pace",
+    "start_date": "2026-11-08",
+    "end_date": "2026-11-08",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/Aut%C3%B3dromo_Jos%C3%A9_Carlos_Pace",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Interlagos_Circuit"
+  },
+  {
+    "id": "f1-las-vegas-grand-prix-2026",
+    "name": "Las Vegas Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Las Vegas",
+    "country": "US",
+    "venue": "Las Vegas Strip Street Circuit",
+    "start_date": "2026-11-22",
+    "end_date": "2026-11-22",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "americas",
+      "night_race"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Las_Vegas_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Las_Vegas_Grand_Prix#Circuit"
+  },
+  {
+    "id": "f1-qatar-grand-prix-2026",
+    "name": "Qatar Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Lusail",
+    "country": "QA",
+    "venue": "Losail International Circuit",
+    "start_date": "2026-11-29",
+    "end_date": "2026-11-29",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "middle_east"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Qatar_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Lusail_International_Circuit"
+  },
+  {
+    "id": "f1-abu-dhabi-grand-prix-2026",
+    "name": "Abu Dhabi Grand Prix 2026",
+    "type": "f1_race",
+    "city": "Abu Dhabi",
+    "country": "AE",
+    "venue": "Yas Marina Circuit",
+    "start_date": "2026-12-06",
+    "end_date": "2026-12-06",
+    "interest_tags": [
+      "f1",
+      "motorsport",
+      "middle_east"
+    ],
+    "source": "jolpica",
+    "source_url": "https://en.wikipedia.org/wiki/2026_Abu_Dhabi_Grand_Prix",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false,
+    "circuit_official_url": "https://en.wikipedia.org/wiki/Yas_Marina_Circuit"
+  },
+  {
+    "id": "ucl-groupstage-md6-2026",
+    "name": "UEFA Champions League 2026/27 — Matchday 6 (final group matchday)",
+    "type": "sports_event",
+    "city": "Multiple cities",
+    "country": "EU",
+    "venue": "Various stadiums",
+    "start_date": "2026-12-09",
+    "end_date": "2026-12-10",
+    "interest_tags": [
+      "football",
+      "champions_league",
+      "uefa"
+    ],
+    "source": "UEFA Champions League (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/2026%E2%80%9327_UEFA_Champions_League",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  },
+  {
+    "id": "milan-design-week-2027",
+    "name": "Milan Design Week 2027",
+    "type": "design",
+    "city": "Milan",
+    "country": "IT",
+    "venue": "Fiera Milano Rho + citywide",
+    "start_date": "2027-04-19",
+    "end_date": "2027-04-25",
+    "interest_tags": [
+      "design",
+      "furniture",
+      "italy"
+    ],
+    "source": "Salone del Mobile (Wikipedia)",
+    "source_url": "https://en.wikipedia.org/wiki/Salone_del_Mobile",
+    "verified_utc": "2026-06-25T20:02:45Z",
+    "provisional": false
+  }
+]
