@@ -1,0 +1,56 @@
+/**
+ * API client. Base URL via NEXT_PUBLIC_API_URL; no hardcoded hostnames.
+ * Throws ApiError on non-2xx so callers can handle uniformly.
+ */
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+interface FetchOpts extends Omit<RequestInit, "body"> {
+  body?: unknown;
+  accessToken?: string;
+}
+
+export async function apiFetch<T>(
+  path: string,
+  { body, accessToken, headers, ...rest }: FetchOpts = {},
+): Promise<T> {
+  const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
+  const init: RequestInit = {
+    ...rest,
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(headers ?? {}),
+    },
+  };
+  if (body !== undefined) {
+    init.body = typeof body === "string" ? body : JSON.stringify(body);
+  }
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = await res.text();
+    }
+    throw new ApiError(`HTTP ${res.status} on ${path}`, res.status, parsed);
+  }
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    return (await res.json()) as T;
+  }
+  return (await res.text()) as unknown as T;
+}

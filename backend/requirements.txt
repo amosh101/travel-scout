@@ -1,0 +1,38 @@
+# Travel Scout v2 — Backend runtime
+# Pins are conservative; bump only with a migration note.
+
+# --- Web framework ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-multipart==0.0.20
+
+# --- Database ---
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# --- Auth + security ---
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-jose[cryptography]==3.3.0
+cryptography==44.0.0
+
+# --- HTTP clients ---
+httpx==0.28.1
+tenacity==9.0.0
+
+# --- Redis (cache, rate-limit, idempotency locks) ---
+redis[hiredis]==5.2.1
+
+# --- Stripe ---
+stripe==11.5.0
+
+# --- Logging / observability ---
+structlog==24.4.0
+
+# --- Misc ---
+email-validator==2.2.0
+python-slugify==8.0.4
+aiosqlite==0.22.1
