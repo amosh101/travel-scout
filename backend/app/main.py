@@ -91,6 +91,10 @@ app.include_router(recommendations.router)
 from app.routers import account  # noqa: E402
 app.include_router(account.router)
 
+# MVP Revamp 2026-06-25 Part 2: itineraries router (find / save / dismiss / list / get)
+from app.routers import itineraries  # noqa: E402
+app.include_router(itineraries.router)
+
 # Include neural search router if available
 if NEURAL_ROUTER_AVAILABLE:
     app.include_router(neural_search.router)
