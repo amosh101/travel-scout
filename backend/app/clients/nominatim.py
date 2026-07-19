@@ -84,17 +84,29 @@ _COUNTRY_HINTS: dict[str, str] = {
 
 
 def _extract_country_code(query: str) -> str | None:
-    """Look for a country name or 2-letter code in the query string."""
+    """Look for a country name or 2-letter code in the query string.
+
+    Substring match is only used for multi-word country names. For 2- and
+    3-letter keys (which would otherwise false-match in city names like
+    "Brussels" containing "us", or "Lusaka" containing "us"), we require a
+    whole-word match surrounded by non-letter boundaries.
+    """
     q = query.lower().strip()
     # Direct 2-letter code at end (e.g. "Brussels, BE")
     if "," in q:
         suffix = q.rsplit(",", 1)[-1].strip().upper()
         if len(suffix) == 2 and suffix.isalpha():
             return suffix
-    # Whole-string match
-    for k, v in _COUNTRY_HINTS.items():
-        if k in q:
-            return v
+    # Whole-word match for short keys (avoids "us" in "brussels" -> US).
+    # Build a regex that matches the key only when surrounded by non-letters
+    # or string boundaries.
+    import re as _re
+    word_boundary = _re.compile(r"(^|\b)({})(\b|$)".format("|".join(
+        _re.escape(k) for k in _COUNTRY_HINTS
+    )))
+    m = word_boundary.search(q)
+    if m:
+        return _COUNTRY_HINTS[m.group(2)]
     return None
 
 
@@ -116,7 +128,15 @@ class NominatimClient(BaseClient):
     def is_configured(self) -> bool:
         return True
 
-    async def geocode(self, query: str, limit: int = 5) -> list[GeocodeResult]:
+    async def geocode(
+        self,
+        query: str,
+        limit: int = 5,
+        country_bias: str | None = None,
+    ) -> list[GeocodeResult]:
+        """Geocode a place name. If ``country_bias`` is set (ISO 3166-1
+        alpha-2, lowercased), Nominatim is asked to prefer that country.
+        """
         global _last_call
         url = f"{NOMINATIM_BASE}/search"
         params: dict[str, str] = {
@@ -124,6 +144,7 @@ class NominatimClient(BaseClient):
             "format": "jsonv2",
             "limit": str(limit),
             "addressdetails": "1",
+            "accept-language": "en",
         }
         # If the query contains a country code or recognizable country name,
         # bias the search to that country. This prevents "Brussels" returning
@@ -131,6 +152,8 @@ class NominatimClient(BaseClient):
         cc = _extract_country_code(query)
         if cc:
             params["countrycodes"] = cc.lower()
+        elif country_bias:
+            params["countrycodes"] = country_bias.lower()
         async with _lock:
             now = asyncio.get_event_loop().time()
             wait = _RATE_LIMIT_S - (now - _last_call)
