@@ -26,11 +26,22 @@ export async function apiFetch<T>(
   { body, accessToken, headers, ...rest }: FetchOpts = {},
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
+  // If the caller didn't pass a token, try to read it from localStorage.
+  // This keeps the api client usable outside React (e.g. in loaders) and
+  // means components don't have to thread the token everywhere.
+  let token = accessToken;
+  if (!token && typeof window !== "undefined") {
+    try {
+      token = window.localStorage.getItem("travel_scout_token") ?? undefined;
+    } catch {
+      // ignore
+    }
+  }
   const init: RequestInit = {
     ...rest,
     headers: {
       "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers ?? {}),
     },
   };

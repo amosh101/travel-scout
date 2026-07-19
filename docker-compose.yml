@@ -53,7 +53,7 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://100.91.143.50:8000
     depends_on:
       - api
     volumes:

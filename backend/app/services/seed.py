@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    AlgoWeight,
     Destination,
     EventSource,
     FlightSource,
@@ -192,6 +193,21 @@ TIER_LIMIT_DEFINITIONS: list[dict] = [
 
 
 # -----------------------------------------------------------------------------
+# Algorithm weights (tunable by admins via /api/admin/weights)
+# -----------------------------------------------------------------------------
+
+ALGO_WEIGHT_DEFINITIONS: list[tuple[str, str, str]] = [
+    # (key, value, description)
+    ("w_interest_match", "0.40", "How much an event matching the user's interests matters"),
+    ("w_date_anchor", "0.25", "How much the event date aligning with the user's date window matters"),
+    ("w_destination_proximity", "0.15", "How close the event's destination is to the user's anchor city"),
+    ("w_weather", "0.05", "Weather favourability at the event destination"),
+    ("w_price", "0.10", "Inverse cost-of-itinerary weight (cheaper itineraries rank higher)"),
+    ("w_freshness", "0.05", "How much to prefer events discovered within the last 24h"),
+]
+
+
+# -----------------------------------------------------------------------------
 # Seeder
 # -----------------------------------------------------------------------------
 
@@ -321,6 +337,18 @@ async def seed_all(session: AsyncSession) -> dict[str, int]:
         else:
             for k, v in tl.items():
                 setattr(existing, k, v)
+
+    # Algo weights
+    for key, value, description in ALGO_WEIGHT_DEFINITIONS:
+        existing = (await session.execute(
+            select(AlgoWeight).where(AlgoWeight.key == key)
+        )).scalar_one_or_none()
+        if existing is None:
+            session.add(AlgoWeight(key=key, value=value, description=description))
+            counts["algo_weights_created"] = counts.get("algo_weights_created", 0) + 1
+        else:
+            existing.value = value
+            existing.description = description
 
     await session.commit()
     return counts

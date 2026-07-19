@@ -50,3 +50,40 @@ def decode_access_token(token: str) -> dict[str, Any]:
         return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
     except JWTError as exc:
         raise ValueError(f"invalid token: {exc}") from exc
+
+
+# -----------------------------------------------------------------------------
+# T8f: passport-number obfuscation (NOT cryptographically secure)
+# -----------------------------------------------------------------------------
+# We XOR with a server-side key (the JWT secret) and base64 the result. This
+# defeats trivial database-dump attacks (no plaintext PII in the row) but is
+# NOT real encryption: anyone with the JWT secret can reverse it.
+#
+# Production replacement: switch to Fernet (cryptography.fernet.Fernet) with
+# a dedicated key from env. Tracked as a v2.x follow-up.
+
+import base64
+
+
+def _obf_key() -> bytes:
+    return get_settings().jwt_secret_key.encode("utf-8")[:32].ljust(32, b"0")
+
+
+def obfuscate_passport(value: str) -> str:
+    if not value:
+        return value
+    raw = value.encode("utf-8")
+    key = _obf_key()
+    xored = bytes((b ^ key[i % len(key)]) for i, b in enumerate(raw))
+    return base64.urlsafe_b64encode(xored).decode("ascii")
+
+
+def deobfuscate_passport(value: str) -> str:
+    if not value:
+        return value
+    try:
+        xored = base64.urlsafe_b64decode(value.encode("ascii"))
+    except Exception:  # noqa: BLE001
+        return ""  # not obfuscated, treat as empty
+    key = _obf_key()
+    return bytes((b ^ key[i % len(key)]) for i, b in enumerate(xored)).decode("utf-8", errors="replace")

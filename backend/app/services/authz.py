@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import (
+    ActorKind,
+    AuditLog,
     Permission,
     Role,
     RolePermission,
@@ -118,10 +120,11 @@ class CurrentUser:
         self.id = user.id
 
 
-async def get_current_user(
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> User:  # real impl reads Bearer token from request; stub for foundation card
-    raise NotImplementedError("register an auth router in the user-journey card")
+# Re-export get_current_user from app.routers.auth for callers that prefer
+# ``from app.services.authz import get_current_user``. The real implementation
+# lives in app.routers.auth; this is not a circular import because auth.py
+# does not import from this module.
+from app.routers.auth import get_current_user as get_current_user  # noqa: F401
 
 
 def require_permission(perm: str):
@@ -129,12 +132,42 @@ def require_permission(perm: str):
 
     async def _dep(
         session: Annotated[AsyncSession, Depends(get_session)],
-        # current_user: Annotated[User, Depends(get_current_user)],
+        user: Annotated[User, Depends(get_current_user)],
     ) -> User:
-        # Placeholder: in foundation card, this is exercised by tests via direct
-        # call to ``user_has_permission``; the full dep chain lands with the
-        # auth router in t3_user_journey.
-        raise NotImplementedError("auth router lands in t3_user_journey")
+        if not await user_has_permission(session, user.id, perm):
+            raise PermissionDenied(perm)
+        return user
 
     _dep.__name__ = f"require_{perm.replace('.', '_')}"
     return _dep
+
+
+async def write_audit_log(
+    session: AsyncSession,
+    *,
+    actor_user_id: UUID | None,
+    action: str,
+    target_kind: str | None = None,
+    target_id: str | None = None,
+    metadata: dict | None = None,
+    request_id: str | None = None,
+    actor_kind: ActorKind = ActorKind.ADMIN,
+) -> AuditLog:
+    """Append an audit-log row. Caller commits.
+
+    Usage: call this just before returning from a mutating admin endpoint, and
+    the caller's ``await session.commit()`` persists both the change and the
+    log entry in one transaction.
+    """
+    entry = AuditLog(
+        actor_user_id=actor_user_id,
+        actor_kind=actor_kind,
+        action=action,
+        target_kind=target_kind,
+        target_id=target_id,
+        metadata_json=metadata or {},
+        request_id=request_id,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry

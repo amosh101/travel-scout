@@ -10,7 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.models import AuditLog
+from app.models import ActorKind, AuditLog, User
+from app.services.authz import require_permission
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/audit")
 async def list_audit_entries(
     session: Annotated[AsyncSession, Depends(get_session)],
+    _user: Annotated[User, Depends(require_permission("audit.read"))],
     actor_user_id: UUID | None = None,
     action: str | None = None,
     since: datetime | None = None,

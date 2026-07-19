@@ -15,6 +15,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import get_settings
 
 _ADMIN_PREFIXES = ("/api/admin", "/admin")
+# Agent-side endpoints live under /api/agent. The user-side handoff
+# (POST /api/agent/queue to create a new row) is allowed from any
+# origin (it just needs a JWT); the agent-side list/claim/release/
+# outcome endpoints are Tailscale-only.
+_AGENT_SIDE_METHOD_PREFIX = {
+    "GET": ("/api/agent",),
+    "PATCH": ("/api/agent",),
+    "DELETE": ("/api/agent",),
+}
 
 
 class TailscaleAdminGate(BaseHTTPMiddleware):
@@ -23,7 +32,12 @@ class TailscaleAdminGate(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        if not any(request.url.path.startswith(p) for p in _ADMIN_PREFIXES):
+        path = request.url.path
+        method = request.method.upper()
+        gated_prefixes: tuple[str, ...] = _ADMIN_PREFIXES
+        if method in _AGENT_SIDE_METHOD_PREFIX:
+            gated_prefixes = gated_prefixes + _AGENT_SIDE_METHOD_PREFIX[method]
+        if not any(path.startswith(p) for p in gated_prefixes):
             return await call_next(request)
 
         settings = get_settings()

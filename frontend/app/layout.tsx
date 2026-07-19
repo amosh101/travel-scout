@@ -4,7 +4,7 @@ import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
   title: process.env.NEXT_PUBLIC_APP_NAME ?? "Travel Scout",
-  description: "Travel Scout — intersections of your interests, real events, real flights.",
+  description: "Trips built around what you love.",
 };
 
 export default function RootLayout({

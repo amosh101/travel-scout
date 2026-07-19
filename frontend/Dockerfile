@@ -1,19 +1,19 @@
-FROM node:22-alpine AS deps
+FROM node:22-alpine
+
 WORKDIR /app
+
+# Install deps (cached layer for package.json changes only)
 COPY package*.json ./
 RUN npm ci
 
-FROM node:22-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+# Source is mounted via docker-compose volume in dev mode
+# (`./frontend:/app` and `frontend_node_modules:/app/node_modules`)
+# so the dev server has hot-reload.
 COPY . .
-RUN npm run build
 
-FROM node:22-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
 EXPOSE 3000
-CMD ["node", "server.js"]
+
+# Default command; docker-compose overrides this to `npm run dev`
+# for the local-dev path. Build-step is skipped (use `npm run build`
+# in the host if you want a production image).
+CMD ["npm", "run", "dev"]

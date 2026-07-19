@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # --- Tailscale admin gate ---
     admin_allowed_cidrs: str = "100.64.0.0/10"
 
+    # --- Bootstrap admin (first-boot superadmin) ---
+    # Set via env: BOOTSTRAP_ADMIN_EMAIL.
+    # If set, the bootstrap_admin service ensures this email has the
+    # superadmin role. If the user does not exist, it is created with
+    # a generated password logged once at startup.
+    # Leave empty in production once a real admin exists; the bootstrap
+    # is idempotent and harmless to keep set.
+    bootstrap_admin_email: str = ""
+
     @field_validator("jwt_secret_key", "stripe_secret_key", "stripe_webhook_secret")
     @classmethod
     def _no_placeholder(cls, v: str, info) -> str:
@@ -72,7 +81,7 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("cors_origins", "admin_allowed_cidrs")
+    @field_validator("cors_origins", "admin_allowed_cidrs", "bootstrap_admin_email")
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip()

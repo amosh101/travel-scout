@@ -14,22 +14,28 @@ Schema design notes:
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     Boolean,
     CHAR,
     Column,
+    Date as SA_Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    create_engine,
+    func,
+    select,
 )
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PortableUUID
 from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, relationship
 
@@ -100,6 +106,16 @@ class User(Base):
         default=SubscriptionTier.FREE,
     )
     stripe_customer_id = Column(String(255), nullable=True, unique=True)
+
+    # --- T8f: travel-doc / contact fields (all nullable, all optional) ---
+    # Nationality and passport-issuing country are ISO 3166-1 alpha-2.
+    nationality = Column(String(2), nullable=True)
+    passport_number = Column(String(512), nullable=True)  # T8f: obfuscated
+    passport_expiry = Column(SA_Date, nullable=True)
+    passport_issuing_country = Column(String(2), nullable=True)
+    date_of_birth = Column(SA_Date, nullable=True)
+    emergency_contact_name = Column(String(255), nullable=True)
+    emergency_contact_phone = Column(String(32), nullable=True)
 
     created_at = created_at_column()
     updated_at = updated_at_column()
@@ -416,17 +432,28 @@ class BookingsLog(Base):
         ForeignKey("saved_itineraries.id", ondelete="SET NULL"),
         nullable=True,
     )
-    status = Column(String(32), nullable=False)  # pending | confirmed | failed | refunded
-    amount_cents = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False)  # pending | claimed | in_progress | confirmed | failed | refunded
+    amount_cents = Column(Integer, nullable=False, default=0)
     currency = Column(CHAR(3), nullable=False, default="USD")
     external_id = Column(String(255), nullable=True)  # Stripe charge / booking ref
     metadata_json = Column("metadata", portable_json(), nullable=False, default=dict)
+    # T8e: agent-handoff fields. Nullable so the existing rows are
+    # valid; ``create_all`` will add the new columns on next boot.
+    assigned_agent_id = Column(
+        PortableUUID(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    outcome_at = Column(DateTime(timezone=True), nullable=True)
+    outcome_note = Column(Text, nullable=True)
 
     created_at = created_at_column()
 
     __table_args__ = (
         Index("ix_bookings_log_user", "user_id"),
         Index("ix_bookings_log_status", "status"),
+        Index("ix_bookings_log_agent", "assigned_agent_id"),
     )
 
 
@@ -570,11 +597,23 @@ class UsageCounter(Base):
 
 
 # Re-export all models for convenient import from ``app.models``
+# Refdata models (countries, cities, airports, city_aliases) live in
+# ``app.refdata.models`` to keep this file focused on the core domain.
+# Importing them here ensures Base.metadata knows about them.
+from app.refdata.models import Airport as Airport  # noqa: F401
+from app.refdata.models import City as City  # noqa: F401
+from app.refdata.models import CityAlias as CityAlias  # noqa: F401
+from app.refdata.models import Country as Country  # noqa: F401
+
 __all__ = [
     "ActorKind",
+    "Airport",
     "AlgoWeight",
     "AuditLog",
     "BookingsLog",
+    "City",
+    "CityAlias",
+    "Country",
     "Destination",
     "Event",
     "EventSource",

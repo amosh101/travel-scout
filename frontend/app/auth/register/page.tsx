@@ -1,18 +1,115 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { apiFetch, ApiError } from "../../../lib/api";
+import { useAuth } from "../../../lib/auth-context";
+
 export default function RegisterPage() {
+  const router = useRouter();
+  const { setToken } = useAuth();
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await apiFetch<{
+        access_token: string;
+        user: { id: string; email: string };
+      }>("/api/auth/register", {
+        method: "POST",
+        body: { email, password, name },
+      });
+      setToken(res.access_token);
+      router.push("/saved");
+    } catch (e) {
+      const msg =
+        e instanceof ApiError
+          ? e.status === 409
+            ? "Email already registered"
+            : e.status === 422
+              ? "Password must be at least 12 characters"
+              : `Error ${e.status}`
+          : e instanceof Error
+            ? e.message
+            : "Registration failed";
+      setErr(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-6">
       <h1 className="text-2xl font-semibold">Create account</h1>
+
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium" htmlFor="name">
+            Name
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            autoComplete="name"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium" htmlFor="email">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            autoComplete="email"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium" htmlFor="password">
+            Password (min 12 chars)
+          </label>
+          <input
+            id="password"
+            type="password"
+            required
+            minLength={12}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            autoComplete="new-password"
+          />
+        </div>
+        {err && <p className="text-sm text-red-400">{err}</p>}
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? "Creating…" : "Create account"}
+        </button>
+      </form>
+
       <p className="text-sm text-muted-foreground">
-        Registration UI lands in the user-journey card. This page exists so the
-        route resolves and the theme renders correctly.
+        Already have one?{" "}
+        <Link href="/auth/login" className="text-primary underline">
+          Sign in
+        </Link>
+        .
       </p>
-      <button
-        type="button"
-        disabled
-        className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground opacity-50"
-      >
-        Create account (coming soon)
-      </button>
     </div>
   );
 }
