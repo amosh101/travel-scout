@@ -16,8 +16,9 @@ directly. This keeps the response shape stable for the frontend.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -406,6 +407,50 @@ async def _build_itinerary_for(
             "booking_link": holiday_url,
             "booking_label": "View on Nager.Date",
         })
+
+    # Free event sources — Wikidata + Wikipedia. For each user
+    # interest, fetch the matching free events and append the ones
+    # that fall in the trip window. This is where the "interest
+    # driven" promise of the PRD actually gets fulfilled: jazz,
+    # classical, electronic, rock, cycling, sport, art-museums,
+    # architecture, design, photography, literature, food-wine,
+    # adventure, motorsport all have free sources now.
+    from app.clients.free_events import build_free_event_aggregator
+    free_agg = build_free_event_aggregator()
+    non_anchor_interests = [i for i in interests_norm
+                             if i not in f1_kw and i != "public-holidays"]
+    if non_anchor_interests:
+        try:
+            per_interest = await asyncio.gather(
+                *(free_agg.search(
+                    interest_key=k,
+                    country_alpha2=d_country,
+                    start_date=date_from,
+                    end_date=date_to,
+                    city=candidate_name,
+                    limit=5,
+                ) for k in non_anchor_interests),
+                return_exceptions=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Free event aggregator failed: %s", e)
+            per_interest = []
+        for batch in per_interest:
+            if isinstance(batch, Exception):
+                logger.warning("Free event search failed: %s", batch)
+                continue
+            for e in batch:
+                anchor_events.append({
+                    "kind": e.get("kind", "event"),
+                    "title": e.get("name", "Event"),
+                    "date": e.get("starts_at").isoformat() if e.get("starts_at") else None,
+                    "city": e.get("city", ""),
+                    "country": e.get("country", ""),
+                    "source": e.get("source", "wikipedia"),
+                    "source_url": e.get("source_url"),
+                })
+        if per_interest and "free_events" not in sources_used:
+            sources_used.append("free_events")
 
     # Score (audit-only reasons) + user-facing pitch.
     score, audit_reasons = _score_itinerary(

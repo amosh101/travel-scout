@@ -228,6 +228,11 @@ class Interest(Base):
     name = Column(String(128), nullable=False)
     description = Column(Text, nullable=False, default="")
     event_keywords = Column(portable_json(), nullable=False, default=list)
+    # v3: "kind" groups similar interests (music, sport, food, gaming,
+    # culture, lifestyle, holidays) so the intersection algorithm can
+    # apply kind-level weights. Nullable so old rows from v1/v2 still
+    # load.
+    kind = Column(String(32), nullable=True)
     destination_region = Column(String(64), nullable=True)
     destination_flexibility = Column(String(32), nullable=True)  # strict | flexible | anywhere
 

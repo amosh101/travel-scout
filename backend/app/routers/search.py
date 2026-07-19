@@ -160,6 +160,7 @@ class Itinerary:
     total_distance_km: float = 0.0
     races_in_window: list[dict] = field(default_factory=list)
     holiday_alerts: list[dict] = field(default_factory=list)
+    interest_events: list[dict] = field(default_factory=list)
     hotels: list[dict] = field(default_factory=list)
     route: dict | None = None
     sources: list[str] = field(default_factory=list)
@@ -231,6 +232,15 @@ async def search(
     start_date: date = Query(...),
     end_date: date = Query(...),
     top_n: int = Query(5, ge=1, le=20),
+    interests: str | None = Query(
+        None,
+        description=(
+            "Comma-separated list of interest keys the user is filtering on "
+            "(e.g. 'jazz,art-museums'). Authenticated users get this from "
+            "their stored interests; the unauthenticated /search endpoint "
+            "accepts it as a query param."
+        ),
+    ),
 ) -> dict[str, Any]:
     """Search for travel itineraries matching the user's criteria.
 
@@ -566,8 +576,62 @@ async def search(
         logger.info("Overpass unavailable: %s", e)
         missing.append("hotels (Overpass API busy, try again)")
 
+    # --- Interest-matched free events ---
+    # If the caller passed ``?interests=jazz,art-museums``, fetch real
+    # events from Wikidata + Wikipedia for those interests. The
+    # unauthenticated /search endpoint gets the list from the query
+    # string; /api/itineraries/discover (the personalised endpoint)
+    # reads from the user_interests table.
+    interest_keys: list[str] = []
+    if interests:
+        interest_keys = [i.strip() for i in interests.split(",") if i.strip()]
+    if not interest_keys:
+        interest_keys = ["f1", "public-holidays"]  # default anchor events
+
+    from app.clients.free_events import build_free_event_aggregator
+    free_agg = build_free_event_aggregator()
+    country_for_filter = str(dest_res.country.alpha2) if dest_res.country else None
+    dest_city_name = str(dest_res.city.name) if dest_res.city else destination
+
+    interest_events: list[dict] = []
+    if interest_keys:
+        per_interest = await asyncio.gather(
+            *(free_agg.search(
+                interest_key=k,
+                country_alpha2=country_for_filter,
+                start_date=start_date,
+                end_date=end_date,
+                city=dest_city_name,
+                limit=10,
+            ) for k in interest_keys),
+            return_exceptions=True,
+        )
+        for batch in per_interest:
+            if isinstance(batch, Exception):
+                logger.warning("Free event search failed: %s", batch)
+                continue
+            for e in batch:
+                d = e.to_dict()
+                # Don't double-add F1 races or holidays; the rest go in
+                # ``interest_events`` and are surfaced in the pitch.
+                if d.get("source") in ("jolpica",):
+                    continue
+                interest_events.append(d)
+    sources_used.append("free_events")
+
     # --- Score and rank (single itinerary for now) ---
     headline_races = races_at_destination or races_in_window
+    # Surface interest-matched free events in the pitch and a dedicated
+    # response field. Admin can later wire this into ``anchor_events``.
+    interest_match_lines: list[str] = []
+    for e in interest_events:
+        kind = e.get("kind", "event")
+        when = e.get("starts_at") or "this window"
+        name = e.get("name", "Event")
+        city = e.get("city") or ""
+        interest_match_lines.append(
+            f"{name} ({kind}) on {when} in {city}".rstrip()
+        )
     # Prefer canonical names from the DB over the raw Nominatim display.
     dest_name = (
         str(dest_res.city.name) if dest_res.city else d_display.split(",")[0]
@@ -598,6 +662,7 @@ async def search(
         total_distance_km=(route.distance_m / 1000) if route else 0.0,
         races_in_window=headline_races,
         holiday_alerts=holiday_alerts,
+        interest_events=interest_events,
         hotels=hotels_data,
         route={
             "distance_km": route.distance_m / 1000,
