@@ -33,7 +33,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_session
 from app.models import Interest, Subscription, User, UserInterest
 from app.models import ActorKind, UserRole
-from app.schemas.me import MeOut, MePatch
+from app.schemas.me import MeOut, MePatch, OnboardingIn, OnboardingOut
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -700,6 +700,106 @@ async def patch_me(
         next_billing_date=next_billing,
         home_airport=None,
         onboarding_complete=False,
+        role=role_key,
+    )
+
+
+# -----------------------------------------------------------------------------
+# POST /me/onboarding — 3-step wizard store
+# -----------------------------------------------------------------------------
+# Stores the wizard output (home airport, interest keys, destination
+# wishlist) on the current user. ``skippable=True`` records the
+# "skipped" audit action but does not flip ``onboarding_complete`` (so
+# the UI can prompt again next login).
+#
+# SCHEMA GAP — see BLOCK comment on the kanban card t_83ea9222:
+# the User model has no ``home_airport`` column, no JSON ``interests`` /
+# ``destinations`` column, and no ``onboarding_complete`` flag. The task
+# hard rule forbids schema changes in this card, so the endpoint
+# validates the body and writes the audit row, but the persisted values
+# are no-ops (mirroring the same gap PATCH /me already documents for
+# home_airport). GET /me still hardcodes None / False for both fields
+# until a follow-up card adds the columns.
+# -----------------------------------------------------------------------------
+
+
+@router.post("/me/onboarding", response_model=OnboardingOut)
+async def post_me_onboarding(
+    payload: OnboardingIn,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OnboardingOut:
+    """Store the 3-step onboarding wizard result.
+
+    Idempotent: a second call with the same body returns 200 with the
+    same response shape and writes a second audit row (so the operator
+    can see the user re-saved their preferences, which is what they
+    asked for).
+    """
+    # Re-fetch with roles eagerly loaded (same trick as GET /me, so
+    # ``.roles`` access below doesn't trigger a lazy load after commit).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # ---- Persist (no-op until the User columns land) -----------------
+    # See the SCHEMA GAP block above. The values are accepted on the
+    # wire so the UI round-trips correctly the moment a follow-up card
+    # adds the columns; we just don't store them on the ORM today.
+    # When the migration lands, replace these ``pass`` lines with:
+    #   user_full.home_airport = payload.home_airport
+    #   user_full.onboarding_complete = not payload.skippable
+    #   (interests/destinations go into the JSON columns, OR into the
+    #   user_interests / user_destinations M2M tables — TBD)
+    _ = payload  # referenced for the audit log metadata below
+
+    # ---- Audit log ---------------------------------------------------
+    audit_action = "onboarding_skipped" if payload.skippable else "onboarding_completed"
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action=audit_action,
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={
+            "home_airport": payload.home_airport,
+            "interests": list(payload.interests),
+            "destinations": list(payload.destinations),
+            "skippable": payload.skippable,
+        },
+        actor_kind=ActorKind.USER,
+    )
+
+    await session.commit()
+
+    # Re-fetch after commit (commit() expires relationships).
+    stmt2 = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt2)).scalar_one()
+
+    # Re-resolve role (same as GET /me / PATCH /me).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    return OnboardingOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=None,
+        home_airport=None,  # SCHEMA GAP — no column yet
+        onboarding_complete=False,  # SCHEMA GAP — no column yet
         role=role_key,
     )
 
