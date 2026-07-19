@@ -48,6 +48,63 @@ from app.database import Base  # noqa: E402
 import app.models  # noqa: E402,F401  -- registers models on Base.metadata
 
 
+def _register_sqlite_compat_functions() -> None:
+    """Register SQLite compatibility shims for Postgres-only functions
+    that the routers use (to_char, etc.). Tests run on SQLite; production
+    runs on Postgres.
+    """
+    import sqlite3
+    import datetime as _dt
+    # to_char(<datetime>, 'YYYYMM') -> '202606' (the format used by the
+    # itineraries tier-guard for monthly bucketing).
+    def _to_char(value, fmt):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                value = _dt.datetime.fromisoformat(value)
+            except ValueError:
+                return value
+        if not isinstance(value, _dt.datetime):
+            return str(value)
+        return value.strftime("%Y%m")
+    sqlite3.register_adapter(_dt.datetime, lambda v: v.isoformat())
+    sqlite3.register_converter("TIMESTAMP", lambda b: _dt.datetime.fromisoformat(b.decode().split(".")[0]))
+    # Register the function in any new SQLite connection that uses aiosqlite.
+    # aiosqlite uses the default sqlite3 module, so register_function
+    # makes it available across all connections.
+    sqlite3.register_function = getattr(sqlite3, "register_function", None)
+    if hasattr(sqlite3, "register_function"):
+        for db in (":memory:",):
+            try:
+                # Older Python: sqlite3.Connection.register_function doesn't
+                # exist as a module-level API, only on instances. The test
+                # conftest creates engines lazily, so we register via the
+                # event listener below.
+                pass
+            except Exception:
+                pass
+    # aiosqlite uses Python's sqlite3 module. The most reliable way is
+    # to attach a SQLAlchemy event listener on connect, but aiosqlite's
+    # async engine uses a different connect path. We register the
+    # function on the module so any new Connection that imports it picks
+    # it up via the create_function mechanism.
+    # Cleanest cross-version approach: monkey-patch sqlite3.dbapi2's
+    # connect to register the function.
+    orig_connect = sqlite3.connect
+    def _patched_connect(*args, **kwargs):
+        conn = orig_connect(*args, **kwargs)
+        try:
+            conn.create_function("to_char", 2, _to_char)
+        except Exception:
+            pass
+        return conn
+    sqlite3.connect = _patched_connect
+
+
+_register_sqlite_compat_functions()
+
+
 @pytest.fixture
 def settings():
     get_settings.cache_clear()

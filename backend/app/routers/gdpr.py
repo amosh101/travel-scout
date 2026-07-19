@@ -296,9 +296,14 @@ async def delete_me(
     )
 
     # Blanking PII. We keep the row so FK constraints don't break.
+    # The password hash is replaced with a bcrypt of an unguessable
+    # random string — the original hash is gone forever, so the account
+    # can never be recovered or used to log in again.
+    import secrets as _secrets
+    from app.security import hash_password as _hash
     user.email = tombstone
     user.name = "Deleted user"
-    user.password_hash = "x" * 60  # bcrypt-shaped dummy
+    user.password_hash = _hash(_secrets.token_hex(32))
     user.is_active = False
     user.nationality = None
     user.passport_number = None

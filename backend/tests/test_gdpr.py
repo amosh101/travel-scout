@@ -51,37 +51,34 @@ os.environ["BACKEND_PORT"] = "8000"
 os.environ["API_V1_PREFIX"] = "/api"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def engine():
-    """Create engine and tables once per test module."""
+    """Fresh engine per test, with tables recreated."""
     from app.config import get_settings
     from app.database import Base
     import app.models  # noqa: F401  -- registers all models
 
     eng = create_async_engine(_DB_ASYNC, echo=False)
+    import asyncio
+
     async def _create() -> None:
         async with eng.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
-    import asyncio
+
     asyncio.run(_create())
     yield eng
     asyncio.run(eng.dispose())
 
 
-@pytest_asyncio.fixture
-async def session_factory(engine) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    yield factory
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def app(engine):
     """Build the FastAPI app with the test DB wired in."""
     from app.main import create_app
     return create_app()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client(app) -> TestClient:
     return TestClient(app)
 

@@ -17,6 +17,13 @@ Budget: intentionally absent. Until we have real flight + hotel
 pricing wired in, filtering on a budget the system doesn't compute
 would be theatre. Pricing is answered by outbound booking links
 (Google Flights, Skyscanner, Booking.com) on the saved page.
+
+Architecture note: this router does NOT hardcode city/country maps.
+All location resolution goes through ``app.refdata.service.ReferenceService``
+which reads from the ``countries`` / ``cities`` / ``airports`` /
+``city_aliases`` tables. The Nominatim call is only used to obtain
+lat/lon/bbox for routing and holiday lookup — the disambiguation
+logic lives in the database, where admins can edit it.
 """
 from __future__ import annotations
 
@@ -26,161 +33,48 @@ import math
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients import (
-    GeocodeResult,
     build_holidays_client,
     build_jolpica_client,
     build_nominatim_client,
     build_osrm_client,
     build_overpass_client,
 )
+from app.database import get_session
+from app.refdata.models import City, Country
+from app.refdata.service import LocationResolution, ReferenceService
+from sqlalchemy import select as _select
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/search", tags=["search"])
 
 
 # -----------------------------------------------------------------------------
-# Geocoding disambiguation
+# Tunable constants (NOT hardcoded city/country data — these are scoring
+# parameters that an admin should be able to change via algo_weights)
 # -----------------------------------------------------------------------------
-# When the user types an ambiguous city name (Brussels, Paris, Florence,
-# Lima...), Nominatim returns 4-5 results across continents. Picking the
-# top-importance one often gives the wrong country (e.g. Brussels-IL
-# outranks Brussels-BE because the small Illinois town has higher
-# per-capita search frequency). Prefer the result whose country is in
-# the user's known-travel set, or any of the major European/global
-# destinations we know about. Fall back to the highest-importance hit.
-_KNOWN_TRAVEL_COUNTRIES: set[str] = {
-    # SADC
-    "MZ", "ZA", "ZW", "NA", "BW", "ZM", "MW", "MG", "MU", "SC",
-    "TZ", "KE", "RW", "AO", "CD", "LS", "SZ",
-    # Europe (F1 destinations + cultural)
-    "BE", "NL", "DE", "FR", "IT", "ES", "PT", "GB", "AT", "CH",
-    "MC", "HU", "PL", "CZ", "DK", "SE", "FI", "NO", "IE", "GR",
-    "TR", "HR", "RO", "BG", "SK", "SI", "EE", "LV", "LT", "LU",
-    "IS",
-    # Asia / Americas (for trips from these regions too)
-    "AE", "SA", "QA", "SG", "JP", "AU", "BR", "US", "CA", "MX",
-    "AR", "TH", "MY", "ID", "PH", "IN", "EG", "MA", "TN",
-    # Hong Kong / Macao (no alpha-2 in some, but covered)
-}
 
+# How close a race city must be to the destination to count as "at the
+# destination". 200 km covers Spa→Brussels (120 km), Monza→Milan (30 km),
+# Silverstone→London (120 km), Suzuka→Tokyo (~200 km). Beyond that the
+# user is booking a separate domestic leg.
+RACE_AT_DESTINATION_RADIUS_KM = 200.0
 
-# Cities whose names map to multiple countries. When the user types one of
-# these, we apply a stronger "prefer the European/global-travel one" rule
-# because the Maputo user is overwhelmingly likely to mean the European
-# city, not a small American town with the same name.
-_AMBIGUOUS_CITY_PREFER: set[str] = {
-    "brussels", "paris", "florence", "lima", "athens", "naples",
-    "berlin", "london", "dublin", "moscow", "warsaw", "vienna",
-    "milan", "rome", "seville", "cordoba", "cambridge", "oxford",
-    "plymouth", "portsmouth", "jackson", "springfield", "salem",
-    "troy", "sydney", "richmond", "newcastle", "aleppo", "alexandria",
-}
+# How many days before / after the trip window to extend when looking
+# for anchor events. F1 weekends are Fri–Sun; users usually fly in 1–2
+# days before. Public holidays affect pricing 1–2 days before the day.
+EVENT_WINDOW_BUFFER_DAYS = 5
 
-# When the user types one of these ambiguous city names, we bias the
-# Nominatim call to the default country for that name. "Brussels" -> BE,
-# "Paris" -> FR, "Florence" -> IT, etc. This is the strong, deterministic
-# fix for the Brussels-IL / Paris-TX / Florence-OR ambiguity problem.
-_AMBIGUOUS_CITY_DEFAULT_COUNTRY: dict[str, str] = {
-    "brussels": "BE", "bruxelles": "BE", "brussel": "BE",
-    "paris": "FR",
-    "florence": "IT", "firenze": "IT",
-    "lima": "PE",
-    "athens": "GR", "athinai": "GR",
-    "naples": "IT", "napoli": "IT",
-    "berlin": "DE",
-    "london": "GB",
-    "dublin": "IE", "baile atha cliath": "IE",
-    "moscow": "RU", "moskva": "RU",
-    "warsaw": "PL", "warszawa": "PL",
-    "vienna": "AT", "wien": "AT",
-    "milan": "IT", "milano": "IT",
-    "rome": "IT", "roma": "IT",
-    "seville": "ES", "sevilla": "ES",
-    "cordoba": "ES", "cordobaar": "ES", "cordobaes": "ES",
-    "cambridge": "GB", "oxford": "GB",
-    "plymouth": "GB", "portsmouth": "GB",
-    "jackson": "US", "springfield": "US", "salem": "US",
-    "troy": "US", "richmond": "US", "newcastle": "GB",
-    "sydney": "AU",
-    "aleppo": "SY", "alexandria": "EG",
-}
-
-
-def _pick_best_geocode(results: list[GeocodeResult], query: str) -> GeocodeResult:
-    """Pick the most travel-relevant geocode result.
-
-    Strategy (in order):
-      1. If the user typed a country hint, take the top result.
-      2. If the city name is in the known-ambiguous list, prefer the
-         European or major-travel city (Brussels-BE, not Brussels-IL).
-      3. Prefer results whose country is in the known-travel set and has
-         the highest importance score.
-      4. Final fallback: highest importance overall.
-    """
-    if not results:
-        return results[0]
-    if len(results) == 1:
-        return results[0]
-
-    # Did the user include a country hint? Use whole-word match so we
-    # don't false-trigger on substrings like "us" in "brussels".
-    q_lower = query.lower().strip()
-    _COUNTRY_HINT_WORDS = {
-        "belgium", "france", "italy", "spain", "germany", "portugal",
-        "netherlands", "uk", "united kingdom", "usa", "america",
-        "japan", "china", "australia", "brazil", "argentina",
-        "south africa", "mozambique", "kenya", "tanzania", "india",
-        "switzerland", "austria", "hungary", "poland", "ireland",
-        "sweden", "norway", "denmark", "finland", "greece", "turkey",
-        "mexico", "canada", "iceland", "croatia", "romania", "bulgaria",
-    }
-    q_tokens = set(re.findall(r"[a-z]+", q_lower))
-    has_country_hint = bool(q_tokens & _COUNTRY_HINT_WORDS) or bool(
-        re.search(r",\s*[A-Za-z]{2,3}\s*$", query)
-    )
-    if has_country_hint:
-        return results[0]
-
-    # Stripped query (first word) for the ambiguous check.
-    q_stripped = re.sub(r"[^a-z]", "", q_lower.split()[0] if q_lower else "")
-    if q_stripped in _AMBIGUOUS_CITY_PREFER:
-        # Prefer the European result if one exists.
-        eu_codes = {
-            "BE", "FR", "IT", "ES", "PT", "DE", "NL", "GB", "AT", "CH",
-            "MC", "HU", "PL", "CZ", "DK", "SE", "FI", "NO", "IE", "GR",
-            "TR", "HR", "RO", "BG", "SK", "SI", "EE", "LV", "LT", "LU",
-            "IS", "RU",
-        }
-        eu_hits = [
-            r for r in results
-            if (r.country_code or "").upper() in eu_codes
-        ]
-        if eu_hits:
-            return max(eu_hits, key=lambda r: r.importance)
-
-    # Prefer known-travel countries (in case the user is from / heading to
-    # any of the SADC + Europe + common Asia set).
-    travel_hits = [
-        r for r in results
-        if (r.country_code or "").upper() in _KNOWN_TRAVEL_COUNTRIES
-    ]
-    if travel_hits:
-        # Among travel-set hits, prefer the one whose importance is at
-        # least 80% of the top-importance result overall. That keeps a
-        # genuinely-known big city (Cape Town) from losing to a tiny
-        # travel-set town with slightly higher importance.
-        top_imp = max(r.importance for r in results)
-        confident = [r for r in travel_hits if r.importance >= top_imp * 0.7]
-        if confident:
-            return max(confident, key=lambda r: r.importance)
-        return max(travel_hits, key=lambda r: r.importance)
-    # Final fallback: top importance overall.
-    return max(results, key=lambda r: r.importance)
+# Minimum confidence required from ReferenceService to use a city
+# directly. Below this we fall back to Nominatim for the user's input.
+MIN_REFDATA_CONFIDENCE = 0.7
 
 
 # Interest-key synonyms used to match user interest keys to event kinds.
@@ -359,35 +253,155 @@ async def search(
     sources_used: list[str] = []
     missing: list[str] = []
 
-    # --- Geocode origin + destination in parallel ---
-    # Ask for limit=5 so we can pick a better match when the raw query
-    # is ambiguous (e.g. "Brussels" returns 4 cities across continents).
-    # For known-ambiguous city names, bias the Nominatim call to the
-    # default country (Brussels -> BE, Paris -> FR, Florence -> IT, ...).
-    # The "best" pick is the one whose country is in our known-travel set
-    # OR, failing that, the highest-importance result.
-    nomi = build_nominatim_client()
-    dest_bias = _AMBIGUOUS_CITY_DEFAULT_COUNTRY.get(
-        re.sub(r"[^a-z]", "", destination.lower().split()[0] if destination else "")
+    # --- Resolve origin + destination through ReferenceService ---
+    # ReferenceService owns the city/country/alias disambiguation logic.
+    # It reads from the countries / cities / airports / city_aliases
+    # tables — admins can add cities or change the default-bias without a
+    # code deploy. The result is a LocationResolution with city,
+    # country, airport, confidence, and match_kind.
+    #
+    # For lat/lon we prefer our own city record (curated, stable) and
+    # only fall back to Nominatim for the user's freeform input when
+    # the DB didn't resolve it.
+    from app.database import get_session_factory
+
+    factory = get_session_factory()
+
+    # --- Parse country hints from the user's input ---
+    # The user may type "Brussels, US" or "Brussels, Texas" or
+    # "Brussels USA" — ReferenceService accepts a country_bias
+    # parameter. We extract the bias by looking for a 2-letter suffix
+    # or a country name match against our countries table (DB-driven;
+    # no hardcoded list). The first token is the city; everything
+    # after the comma / the trailing country word is the hint.
+    async def _extract_country_hint(text: str) -> str | None:
+        """Look for a country hint in the user's freeform input.
+
+        Returns the 2-letter ISO code if found, else None. Examples:
+          "Brussels, US"   -> "US"
+          "Brussels, USA"  -> "US"
+          "Brussels, Belgium" -> "BE"
+        """
+        if not text:
+            return None
+        # Try the easy case: ", XX" or ", XXX" where XX/XXX is a code.
+        m = re.search(r",\s*([A-Za-z]{2,3})\s*$", text.strip())
+        if m:
+            code = m.group(1).upper()
+            if len(code) == 3:
+                # Could be alpha-3; convert. We use alpha-2 internally.
+                async with factory() as session:
+                    row = (await session.execute(
+                        _select(Country.alpha2).where(Country.alpha3 == code)
+                    )).scalar_one_or_none()
+                    return row
+            async with factory() as session:
+                row = (await session.execute(
+                    _select(Country.alpha2).where(Country.alpha2 == code)
+                )).scalar_one_or_none()
+                return row
+        # Otherwise: check if the last word(s) are a country name.
+        words = text.strip().split()
+        if len(words) >= 2:
+            last = " ".join(words[-2:]).lower()
+            async with factory() as session:
+                row = (await session.execute(
+                    _select(Country.alpha2).where(
+                        Country.name.ilike(last)
+                    )
+                )).scalar_one_or_none()
+                if row:
+                    return row
+            last1 = words[-1].lower()
+            async with factory() as session:
+                row = (await session.execute(
+                    _select(Country.alpha2).where(
+                        Country.name.ilike(last1)
+                    )
+                )).scalar_one_or_none()
+                if row:
+                    return row
+        return None
+
+    origin_bias, dest_bias = await asyncio.gather(
+        _extract_country_hint(origin),
+        _extract_country_hint(destination),
     )
-    origin_bias = _AMBIGUOUS_CITY_DEFAULT_COUNTRY.get(
-        re.sub(r"[^a-z]", "", origin.lower().split()[0] if origin else "")
-    )
+
+    # Strip the country hint from the input — ReferenceService normalises
+    # the text (lowercase, drop punctuation) and the trailing ", US"
+    # would pollute the alias match.
+    import re as _re
+    def _strip_hint(text: str) -> str:
+        return _re.sub(r",\s*[A-Za-z]{2,3}\s*$", "", text.strip()).strip() or text.strip()
+
+    origin_clean = _strip_hint(origin)
+    dest_clean = _strip_hint(destination)
+
+    async def _resolve(text: str, bias: str | None) -> LocationResolution:
+        async with factory() as session:
+            ref = ReferenceService(session)
+            return await ref.resolve(text, country_bias=bias)
+
     try:
-        origin_geo, dest_geo = await asyncio.gather(
-            nomi.geocode(origin, limit=5, country_bias=origin_bias),
-            nomi.geocode(destination, limit=5, country_bias=dest_bias),
+        origin_res, dest_res = await asyncio.gather(
+            _resolve(origin_clean, origin_bias), _resolve(dest_clean, dest_bias)
         )
     except Exception as e:  # noqa: BLE001
-        logger.exception("Nominatim geocode failed")
-        raise HTTPException(503, f"geocoding service error: {e}")
-    if not origin_geo:
+        logger.exception("ReferenceService resolve failed")
+        raise HTTPException(503, f"reference data error: {e}")
+
+    sources_used.append("refdata")
+
+    # For lat/lon, prefer the DB record (curated); fall back to Nominatim
+    # only if the DB didn't have a confident match.
+    nomi = build_nominatim_client()
+
+    async def _ensure_lonlat(res: LocationResolution, raw: str) -> tuple[float, float, str]:
+        """Return (lat, lon, display_name). Uses DB if available, else Nominatim."""
+        if res.city and res.city.latitude is not None and res.city.longitude is not None:
+            display = res.city.name
+            if res.country:
+                display = f"{display}, {res.country.name}"
+            return (
+                float(res.city.latitude),
+                float(res.city.longitude),
+                str(display),
+            )
+        # DB didn't have lat/lon. Use Nominatim to geocode the freeform text.
+        try:
+            results = await nomi.geocode(raw, limit=1)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Nominatim fallback failed for %r: %s", raw, e)
+            raise HTTPException(503, f"geocoding service error: {e}")
+        if not results:
+            raise HTTPException(404, f"location not found: {raw!r}")
+        g = results[0]
+        return float(g.lat), float(g.lon), g.display_name
+
+    if not origin_res.matched and not dest_res.matched:
+        # Both failed; raise 404 with the worst one's text.
+        raise HTTPException(
+            404,
+            f"could not resolve origin ({origin!r}) or destination ({destination!r})",
+        )
+    if not origin_res.matched:
         raise HTTPException(404, f"origin not found: {origin!r}")
-    if not dest_geo:
+    if not dest_res.matched:
         raise HTTPException(404, f"destination not found: {destination!r}")
-    sources_used.append("nominatim")
-    o = _pick_best_geocode(origin_geo, query=origin)
-    d = _pick_best_geocode(dest_geo, query=destination)
+
+    o_lat, o_lon, o_display = await _ensure_lonlat(origin_res, origin)
+    d_lat, d_lon, d_display = await _ensure_lonlat(dest_res, destination)
+    if origin_res.matched and origin_res.match_kind != "iata":
+        # Only used Nominatim as fallback; mention it.
+        if not (origin_res.city and origin_res.city.latitude is not None):
+            sources_used.append("nominatim")
+    if dest_res.matched and dest_res.match_kind != "iata":
+        if not (dest_res.city and dest_res.city.latitude is not None):
+            sources_used.append("nominatim")
+
+    o = SimpleNamespace(lat=o_lat, lon=o_lon, display_name=o_display)
+    d = SimpleNamespace(lat=d_lat, lon=d_lon, display_name=d_display)
 
     # --- Route ---
     osrm = build_osrm_client()
@@ -399,7 +413,7 @@ async def search(
     if route:
         sources_used.append("osrm")
 
-    # --- F1 races in window (2026 season) ---
+    # --- F1 races in window ---
     jolpica = build_jolpica_client()
     try:
         races = await jolpica.fetch_season(start_date.year)
@@ -409,21 +423,23 @@ async def search(
     if races:
         sources_used.append("jolpica")
 
-    # Classify each race: AT destination vs. just in window vs. neither.
     # "At destination" = race country matches the destination's country
-    # OR race city is within ~200 km of the destination (covers Spa->Brussels,
-    # Silverstone->London, Monza->Milan, Suzuka->Tokyo, etc.).
-    # Date buffer is ±5 days because F1 weekends span Fri-Sun and the
-    # user usually has to fly in 1-2 days before.
+    # OR race city is within RACE_AT_DESTINATION_RADIUS_KM of the destination.
+    # Country matching comes from the LocationResolution we already resolved
+    # above (no second hardcode); race-city resolution also goes through
+    # ReferenceService so an admin can add/remove cities in the DB.
     races_in_window: list[dict] = []
     races_at_destination: list[dict] = []
     d_lat, d_lon = d.lat, d.lon
-    d_country = (d.country_code or "").upper()
+    d_country = (
+        dest_res.country.alpha2.upper()
+        if dest_res.country else ""
+    )
     for r in races:
         in_window = (
-            start_date - timedelta(days=5)
+            start_date - timedelta(days=EVENT_WINDOW_BUFFER_DAYS)
             <= r.starts_at.date()
-            <= end_date + timedelta(days=5)
+            <= end_date + timedelta(days=EVENT_WINDOW_BUFFER_DAYS)
         )
         if not in_window:
             continue
@@ -435,86 +451,80 @@ async def search(
             "starts_at": r.starts_at.isoformat(),
         }
         races_in_window.append(entry)
-        # Distance check: same country OR within 200 km of the destination.
-        # Spa is ~120 km from Brussels; Monza is ~30 km from Milan;
-        # Silverstone is ~120 km from London. 200 km is the right radius
-        # to catch the "drive / 1h train" travel radius around major cities.
         same_country = bool(d_country) and r.country.upper() == d_country
         within_radius = False
         if d_lat and d_lon:
+            # Resolve the race city through ReferenceService first (DB has
+            # curated lat/lon for Spa, Monza, Silverstone, etc.). Fall back
+            # to Nominatim only if the DB doesn't have it.
+            race_lat, race_lon = None, None
             try:
-                race_geo = await nomi.geocode(
-                    f"{r.city}, {r.country}", limit=1
-                )
+                async with factory() as session:
+                    ref = ReferenceService(session)
+                    race_res = await ref.resolve(r.city)
+                if race_res.city and race_res.city.latitude is not None:
+                    race_lat = float(race_res.city.latitude)  # type: ignore[arg-type]
+                    race_lon = float(race_res.city.longitude)  # type: ignore[arg-type]
             except Exception:  # noqa: BLE001
-                race_geo = []
-            if race_geo:
-                rl = race_geo[0]
-                # Haversine (move the math to module level).
-                phi1, phi2 = math.radians(d_lat), math.radians(rl.lat)
-                dphi = math.radians(rl.lat - d_lat)
-                dlam = math.radians(rl.lon - d_lon)
+                pass
+            if race_lat is None or race_lon is None:
+                try:
+                    race_geo = await nomi.geocode(
+                        f"{r.city}, {r.country}", limit=1
+                    )
+                except Exception:  # noqa: BLE001
+                    race_geo = []
+                if race_geo:
+                    race_lat = float(race_geo[0].lat)
+                    race_lon = float(race_geo[0].lon)
+            if race_lat is not None and race_lon is not None:
+                phi1, phi2 = math.radians(d_lat), math.radians(race_lat)
+                dphi = math.radians(race_lat - d_lat)
+                dlam = math.radians(race_lon - d_lon)
                 a = (
                     math.sin(dphi / 2) ** 2
                     + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
                 )
                 dist_km = 2 * 6371 * math.asin(math.sqrt(a))
-                if dist_km <= 200:
+                if dist_km <= RACE_AT_DESTINATION_RADIUS_KM:
                     within_radius = True
                     entry["distance_from_destination_km"] = str(round(dist_km, 1))
         if same_country or within_radius:
             races_at_destination.append(entry)
 
     # --- Public holidays in destination country ---
-    # The geocoder should give us a country code, but the disambiguator
-    # above may leave it empty for unusual cases. Try a few fallbacks.
+    # Country comes from the LocationResolution we already resolved — no
+    # second hardcode. If the destination didn't match a country in the
+    # DB (freeform text only), the country will be None and we surface
+    # a clear "no country" message instead of guessing.
     holidays_client = build_holidays_client()
-    display_lower = d.display_name.lower()
-    country_fallbacks: list[str] = []
-    if d.country_code:
-        country_fallbacks.append(d.country_code.upper())
-    # Display-name parsing: "Brussels, ... Belgium" -> "BE"
-    for k, v in [
-        ("belgium", "BE"), ("belgique", "BE"), ("belgie", "BE"),
-        ("netherlands", "NL"), ("holland", "NL"),
-        ("germany", "DE"), ("france", "FR"),
-        ("italy", "IT"), ("spain", "ES"), ("portugal", "PT"),
-        ("united kingdom", "GB"), ("britain", "GB"), ("england", "GB"),
-        ("austria", "AT"), ("switzerland", "CH"),
-        ("hungary", "HU"), ("monaco", "MC"),
-        ("united states", "US"), ("mozambique", "MZ"),
-        ("south africa", "ZA"),
-    ]:
-        if k in display_lower and v not in country_fallbacks:
-            country_fallbacks.append(v)
-
     holiday_alerts: list[dict] = []
     holidays: list = []
-    for cc in country_fallbacks:
+    if dest_res.country is None:
+        missing.append(
+            f"holiday data unavailable: destination {destination!r} did not "
+            f"resolve to a known country (admin can add it to refdata.countries)"
+        )
+    else:
+        cc = str(dest_res.country.alpha2)  # type: ignore[arg-type]
         try:
             holidays = await holidays_client.fetch_year(start_date.year, cc)
             if holidays:
                 sources_used.append("holidays")
-                break
         except Exception as e:  # noqa: BLE001
             logger.warning("Holidays fetch failed for %s: %s", cc, e)
-            continue
-    if not holidays:
-        missing.append(
-            f"holiday data unavailable for destination country "
-            f"(tried {country_fallbacks or ['unknown']})"
-        )
-    # Holiday filter uses the same ±5 day buffer as races — a holiday
-    # two days before your trip still affects hotel/airfare prices.
+            missing.append(f"holiday data unavailable for {cc}: {e}")
+        # Holiday filter uses the same EVENT_WINDOW_BUFFER_DAYS buffer as
+        # races — a holiday two days before your trip still affects pricing.
     for h in holidays:
         try:
             d_hol = date.fromisoformat(h.date)
         except ValueError:
             continue
         if (
-            start_date - timedelta(days=5)
+            start_date - timedelta(days=EVENT_WINDOW_BUFFER_DAYS)
             <= d_hol
-            <= end_date + timedelta(days=5)
+            <= end_date + timedelta(days=EVENT_WINDOW_BUFFER_DAYS)
         ):
             holiday_alerts.append({
                 "date": h.date,
@@ -524,39 +534,64 @@ async def search(
             })
 
     # --- Hotels (Overpass; may fail if upstream busy) ---
+    # Overpass needs a bbox. We get it from Nominatim around the
+    # destination lat/lon. The bbox isn't part of our curated city
+    # record; this is one place where Nominatim is the right call.
     hotels_data: list[dict] = []
     try:
         overpass = build_overpass_client()
-        # Use a 0.1-degree bbox around the destination (~11km)
-        s, w, n, e = d.bbox
-        delta = 0.1
-        bbox = (s, w, n + delta, e + delta)
-        hotels = await asyncio.wait_for(
-            overpass.search_hotels_in_bbox(*bbox, limit=10),
-            timeout=8.0,
-        )
-        if hotels:
-            sources_used.append("overpass")
-        hotels_data = [
-            {"name": h.name, "lat": h.lat, "lon": h.lon}
-            for h in hotels
-        ]
+        try:
+            nres = await nomi.geocode(
+                str(dest_res.city.name) if dest_res.city else destination,
+                limit=1,
+            )
+        except Exception:
+            nres = []
+        if nres:
+            g = nres[0]
+            s, w, n, _e = g.bbox
+            delta = 0.1
+            bbox = (s, w, n + delta, _e + delta)
+            hotels = await asyncio.wait_for(
+                overpass.search_hotels_in_bbox(*bbox, limit=10),
+                timeout=8.0,
+            )
+            if hotels:
+                sources_used.append("overpass")
+            hotels_data = [
+                {"name": h.name, "lat": h.lat, "lon": h.lon}
+                for h in hotels
+            ]
     except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
         logger.info("Overpass unavailable: %s", e)
         missing.append("hotels (Overpass API busy, try again)")
 
     # --- Score and rank (single itinerary for now) ---
-    # Choose the headline race set: races that are AT the destination
-    # are the primary selling point. If we found none, fall back to
-    # races in the wider window (still useful context for the user).
     headline_races = races_at_destination or races_in_window
+    # Prefer canonical names from the DB over the raw Nominatim display.
+    dest_name = (
+        str(dest_res.city.name) if dest_res.city else d_display.split(",")[0]
+    )
+    dest_country_name = (
+        str(dest_res.country.name) if dest_res.country
+        else d_display.split(",")[-1].strip()
+    )
+    dest_country_code = (
+        str(dest_res.country.alpha2).upper() if dest_res.country else None
+    )
+    origin_name = (
+        str(origin_res.city.name) if origin_res.city else o_display.split(",")[0]
+    )
+    origin_country_code = (
+        str(origin_res.country.alpha2).upper() if origin_res.country else None
+    )
     itinerary = Itinerary(
         rank=1,
         score=0.0,
         pitch=[],
-        destination=d.display_name.split(",")[0],
-        destination_country=d.display_name.split(",")[-1].strip(),
-        destination_country_code=(d.country_code or "").upper() or None,
+        destination=dest_name,
+        destination_country=dest_country_name,
+        destination_country_code=dest_country_code,
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         duration_days=duration,
@@ -579,8 +614,7 @@ async def search(
     )
     itinerary.score = round(score, 1)
     itinerary.pitch = _build_pitch(
-        interests=["f1", "public-holidays"],  # /search has no auth context;
-        # we always surface matches against the two anchor-event types.
+        interests=["f1", "public-holidays"],
         races_in_window=itinerary.races_in_window,
         holiday_alerts=itinerary.holiday_alerts,
         duration_days=itinerary.duration_days,
@@ -593,22 +627,24 @@ async def search(
         "query": {
             "origin": origin,
             "destination": destination,
-            "destination_picked": d.display_name,
+            "destination_picked": d_display,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
         },
         "geocoding": {
             "origin": {
-                "name": o.display_name,
-                "lat": o.lat,
-                "lon": o.lon,
-                "country_code": (o.country_code or "").upper() or None,
+                "name": o_display,
+                "lat": o_lat,
+                "lon": o_lon,
+                "country_code": origin_country_code,
+                "resolved_via": origin_res.match_kind,
             },
             "destination": {
-                "name": d.display_name,
-                "lat": d.lat,
-                "lon": d.lon,
-                "country_code": (d.country_code or "").upper() or None,
+                "name": d_display,
+                "lat": d_lat,
+                "lon": d_lon,
+                "country_code": dest_country_code,
+                "resolved_via": dest_res.match_kind,
             },
         },
         "results": [asdict(i) for i in itineraries[:top_n]],

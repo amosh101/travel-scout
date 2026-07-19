@@ -1,4 +1,8 @@
-"""ORM models for the reference data (countries, cities, airports, aliases)."""
+"""ORM models for the reference data (countries, cities, airports, aliases).
+
+Importing the column types lazily avoids a circular import with
+``app.models.__init__``, which itself imports from this module.
+"""
 from __future__ import annotations
 
 from sqlalchemy import (
@@ -16,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, relationship
 
 from app.database import Base
-from app.models.types import (
+from app.models.types import (  # noqa: E402
     PortableUUID,
     created_at_column,
     updated_at_column,
@@ -40,6 +44,9 @@ class Country(Base):
     currency = Column(CHAR(3), nullable=True)               # MZN
     flag_emoji = Column(CHAR(4), nullable=True)            # 🇲🇿
     languages = Column(String(255), nullable=True)          # pt,en (ISO 639-1)
+    region = Column(String(64), nullable=True)              # Africa (ISO 3166-1)
+    sub_region = Column(String(64), nullable=True)          # Eastern Africa
+    numeric_code = Column(CHAR(3), nullable=True)           # ISO 3166-1 numeric
 
     created_at = created_at_column()
 
@@ -90,6 +97,10 @@ class City(Base):
     __table_args__ = (
         Index("ix_cities_country", "country_alpha2"),
         Index("ix_cities_ascii", "ascii_name"),
+        UniqueConstraint(
+            "country_alpha2", "ascii_name",
+            name="uq_cities_country_ascii",
+        ),
     )
 
 

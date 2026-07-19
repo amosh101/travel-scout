@@ -23,6 +23,7 @@ from app.routers import (
     gdpr,
     itineraries,
     itineraries_discover,
+    messages,
     profile,
     refdata,
     search,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=settings.api_v1_prefix)
     app.include_router(profile.router, prefix=settings.api_v1_prefix)
     app.include_router(gdpr.router, prefix=settings.api_v1_prefix)
+    app.include_router(messages.router, prefix=settings.api_v1_prefix)
     # itineraries_discover must be mounted BEFORE itineraries so the literal
     # /itineraries/discover route doesn't get swallowed by the
     # /itineraries/{itinerary_id} catch-all pattern.

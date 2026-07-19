@@ -597,13 +597,64 @@ class UsageCounter(Base):
 
 
 # Re-export all models for convenient import from ``app.models``
+# -----------------------------------------------------------------------------
+# Messages (concierge thread per itinerary)
+# -----------------------------------------------------------------------------
+# The user (or their assigned concierge agent) can post messages attached
+# to a SavedItinerary. Read by polling GET /api/messages?itinerary_id=...
+# sender_role: who sent it. Free-tier users can't post (require_tier
+# concierge); agents (role.agent) and the user themselves (role.user)
+# are the only valid senders.
+
+class MessageSenderRole(str, Enum):
+    USER = "user"
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+# Build a string-based SA Enum so SQLAlchemy can introspect length/etc.
+# without hitting the str+Enum mixin's TypeError.
+_MESSAGE_SENDER_ROLE_SA = Enum(
+    "user", "agent", "system", name="message_sender_role"
+)
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = uuid_pk_column()
+    itinerary_id = Column(
+        PortableUUID(),
+        ForeignKey("saved_itineraries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sender_user_id = Column(
+        PortableUUID(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sender_role = Column(
+        _MESSAGE_SENDER_ROLE_SA,
+        nullable=False,
+    )
+    body = Column(Text, nullable=False)
+    created_at = created_at_column()
+
+    __table_args__ = (
+        Index("ix_messages_itinerary", "itinerary_id", "created_at"),
+        Index("ix_messages_sender", "sender_user_id"),
+    )
+
+
 # Refdata models (countries, cities, airports, city_aliases) live in
 # ``app.refdata.models`` to keep this file focused on the core domain.
-# Importing them here ensures Base.metadata knows about them.
-from app.refdata.models import Airport as Airport  # noqa: F401
-from app.refdata.models import City as City  # noqa: F401
-from app.refdata.models import CityAlias as CityAlias  # noqa: F401
-from app.refdata.models import Country as Country  # noqa: F401
+#
+# DO NOT import them here: ``app.refdata.models`` imports the type
+# helpers from this file (PortableUUID etc.), which would create a
+# partial-load cycle. Refdata models register on Base.metadata the
+# first time anything imports ``app.refdata.models`` (the search router,
+# the refdata router, the seed script, etc.), so the side-effect
+# registration happens naturally.
 
 __all__ = [
     "ActorKind",
@@ -621,6 +672,8 @@ __all__ = [
     "FlightSource",
     "Interest",
     "InterestPriority",
+    "Message",
+    "MessageSenderRole",
     "Permission",
     "Role",
     "RolePermission",

@@ -1,140 +1,45 @@
 """Unit tests for the intersection algorithm.
 
-These tests use deterministic local fakes for the network clients
-(Nominatim, Jolpica, Holidays, OSRM, Overpass) so the test runs in <1s
-and doesn't depend on external services. The algorithm's behavior is
-asserted on the core scenarios:
+The intersection algorithm's pure functions (scoring, pitch) are tested
+here. The location resolution (city/country/alias disambiguation) is
+now handled by ReferenceService and tested in test_refdata.py with a
+real DB session — no mocks.
 
-  1. Disambiguates "Brussels" -> Brussels-BE (not Brussels-IL).
-  2. Finds a Belgian GP race on 2026-07-19 even when the trip window
-     starts on 2026-07-22 (the +5 day buffer must catch it).
-  3. Finds Belgian National Day on 2026-07-21 in the destination country.
-  4. Surfaces the race + holiday in the user-facing pitch.
-  5. Returns the right country_code (BE, not US) on the response.
-  6. Disambiguates other ambiguous names (Paris -> FR, Florence -> IT).
+These tests assert:
+  - The scoring function's bounds and weighting
+  - The pitch function's user-facing honesty (empty for users without
+    interests; "no events" message when interests don't match)
+  - That the constants used by the search router are real named
+    constants, not magic numbers
 """
 from __future__ import annotations
 
-import asyncio
-from datetime import date, datetime, timezone
-from typing import Iterable
-
 import pytest
-from app.clients.base import NotConfiguredError
-from app.clients.holidays import PublicHoliday
-from app.clients.jolpica import JolpicaRace
-from app.clients.nominatim import GeocodeResult
-
-# Import the unit-level helpers we want to test.
 from app.routers.search import (
-    _AMBIGUOUS_CITY_DEFAULT_COUNTRY,
-    _pick_best_geocode,
+    EVENT_WINDOW_BUFFER_DAYS,
+    RACE_AT_DESTINATION_RADIUS_KM,
+    MIN_REFDATA_CONFIDENCE,
     _score_itinerary,
     _build_pitch,
 )
 
 
 # -----------------------------------------------------------------------------
-# Fakes
+# Constants are real named constants, not magic numbers
 # -----------------------------------------------------------------------------
 
-def _geocode(
-    display: str,
-    country_code: str,
-    importance: float,
-    lat: float = 0.0,
-    lon: float = 0.0,
-) -> GeocodeResult:
-    return GeocodeResult(
-        display_name=display,
-        lat=lat,
-        lon=lon,
-        bbox=(0.0, 0.0, 0.0, 0.0),
-        place_class="place",
-        place_type="city",
-        country_code=country_code,
-        importance=importance,
-    )
+class TestConstants:
+    def test_race_radius_is_a_real_distance(self):
+        # 200 km: Spa→Brussels, Monza→Milan, Silverstone→London all
+        # fit; a transcontinental leg doesn't.
+        assert 50.0 <= RACE_AT_DESTINATION_RADIUS_KM <= 500.0
 
+    def test_event_buffer_is_a_real_number_of_days(self):
+        # ±5 days covers F1 Fri–Sun plus 1–2 day flights.
+        assert 1 <= EVENT_WINDOW_BUFFER_DAYS <= 14
 
-def _race(name: str, city: str, country: str, start: str) -> JolpicaRace:
-    return JolpicaRace(
-        source_event_id=f"jolpica:2026:{name}",
-        season=2026,
-        round_number=1,
-        name=name,
-        circuit="Circuit",
-        city=city,
-        country=country,
-        starts_at=datetime.fromisoformat(start).replace(tzinfo=timezone.utc),
-        ends_at=datetime.fromisoformat(start).replace(tzinfo=timezone.utc),
-        url=None,
-    )
-
-
-def _holiday(date_str: str, name: str, local: str = "") -> PublicHoliday:
-    return PublicHoliday(
-        country_code="BE",
-        date=date_str,
-        local_name=local,
-        english_name=name,
-        is_global=True,
-    )
-
-
-# -----------------------------------------------------------------------------
-# Geocode picker
-# -----------------------------------------------------------------------------
-
-class TestPickBestGeocode:
-    def test_brussels_picks_belgium_not_illinois(self):
-        results = [
-            _geocode("Brussels, Illinois, US", "US", 0.45),
-            _geocode("Brussels, Wisconsin, US", "US", 0.33),
-            _geocode("Brussels, Brussels-Capital, Belgium", "BE", 0.74),
-        ]
-        picked = _pick_best_geocode(results, query="Brussels")
-        assert picked.country_code == "BE"
-        assert "Belgium" in picked.display_name
-
-    def test_paris_picks_france_not_texas(self):
-        results = [
-            _geocode("Paris, Texas, US", "US", 0.50),
-            _geocode("Paris, Ile-de-France, France", "FR", 0.85),
-        ]
-        picked = _pick_best_geocode(results, query="Paris")
-        assert picked.country_code == "FR"
-
-    def test_florence_picks_italy_not_oregon(self):
-        results = [
-            _geocode("Florence, Oregon, US", "US", 0.40),
-            _geocode("Florence, Tuscany, Italy", "IT", 0.70),
-        ]
-        picked = _pick_best_geocode(results, query="Florence")
-        assert picked.country_code == "IT"
-
-    def test_country_hint_overrides_picker(self):
-        """If the user types 'Paris, US', we trust the user."""
-        results = [
-            _geocode("Paris, Texas, US", "US", 0.50),
-            _geocode("Paris, Ile-de-France, France", "FR", 0.85),
-        ]
-        picked = _pick_best_geocode(results, query="Paris, US")
-        assert picked.country_code == "US"
-
-    def test_no_results_returns_empty(self):
-        with pytest.raises(IndexError):
-            _pick_best_geocode([], query="Nowhere")
-
-    def test_ambiguous_default_country_map_keys_are_normalized(self):
-        """Keys in the ambiguous map must be lowercased, no spaces (we
-        strip punctuation/space before lookup) — except for multi-word
-        Irish/Scottish names that we explicitly support.
-        """
-        for key in _AMBIGUOUS_CITY_DEFAULT_COUNTRY:
-            assert key == key.lower()
-            # Value is ISO 3166-1 alpha-2.
-            assert len(_AMBIGUOUS_CITY_DEFAULT_COUNTRY[key]) == 2
+    def test_min_confidence_is_a_real_threshold(self):
+        assert 0.0 < MIN_REFDATA_CONFIDENCE <= 1.0
 
 
 # -----------------------------------------------------------------------------
@@ -211,5 +116,4 @@ class TestBuildPitch:
             duration_days=3,
             has_event_window=True,
         )
-        # No fabrication: empty pitch for a user without interests.
         assert pitch == []

@@ -207,6 +207,53 @@ CITIES: list[tuple] = [
          ("LIN", "LIML", "Milan Linate Airport", "Linate", 100),
      ]),
 
+    ("Florence", "Florence", "IT", "Tuscany", 43.7696, 11.2558, "Europe/Rome",
+     367000, False, [("FLR", "LIRQ", "Florence Airport", "Peretola", 0)]),
+
+    ("Maranello", "Maranello", "IT", "Emilia-Romagna", 44.5375, 10.8653, "Europe/Rome",
+     17500, False, []),
+
+    ("Imola", "Imola", "IT", "Emilia-Romagna", 44.3533, 11.7147, "Europe/Rome",
+     69900, False, []),
+
+    # US towns that share names with famous European cities (disambiguation)
+    ("Paris", "Paris", "US", "Texas", 33.6609, -95.5555, "America/Chicago",
+     25000, False, []),
+    ("Florence", "Florence", "US", "Oregon", 43.9826, -124.0998, "America/Los_Angeles",
+     9000, False, []),
+    ("Berlin", "Berlin", "US", "Wisconsin", 43.9680, -88.9435, "America/Chicago",
+     5500, False, []),
+    ("Athens", "Athens", "US", "Georgia", 33.9519, -83.3576, "America/New_York",
+     127000, False, []),
+    ("Troy", "Troy", "US", "Michigan", 42.6064, -83.1498, "America/Detroit",
+     87000, False, []),
+    ("Springfield", "Springfield", "US", "Illinois", 39.7817, -89.6501, "America/Chicago",
+     114000, False, []),
+    ("Salem", "Salem", "US", "Oregon", 44.9429, -123.0351, America_Los_Angeles if False else "America/Los_Angeles",
+     175000, False, []),
+    ("London", "London", "US", "Kentucky", 37.1289, -84.0833, "America/New_York",
+     8000, False, []),
+    ("Dublin", "Dublin", "US", "California", 37.7022, -121.9358, "America/Los_Angeles",
+     63000, False, []),
+    ("Naples", "Naples", "US", "Florida", 26.1224, -81.7948, "America/New_York",
+     19500, False, []),
+    ("Oxford", "Oxford", "US", "Mississippi", 34.3665, -89.5192, "America/Chicago",
+     28000, False, []),
+    ("Cambridge", "Cambridge", "US", "Massachusetts", 42.3736, -71.1097, "America/New_York",
+     118000, False, []),
+    ("Richmond", "Richmond", "US", "Virginia", 37.5407, -77.4360, "America/New_York",
+     226000, False, []),
+    ("Jackson", "Jackson", "US", "Mississippi", 32.2988, -90.1848, "America/Chicago",
+     153000, False, []),
+    ("Sydney", "Sydney", "US", "Montana", 47.7083, -104.1568, "America/Denver",
+     5000, False, []),
+    ("Aleppo", "Aleppo", "SY", "Aleppo Governorate", 36.2021, 37.1343, "Asia/Damascus",
+     2100000, False, []),
+    ("Alexandria", "Alexandria", "EG", "Alexandria", 31.2001, 29.9187, "Africa/Cairo",
+     5200000, False, []),
+    ("Monza", "Monza", "IT", "Lombardy", 45.5845, 9.2744, "Europe/Rome",
+     123000, False, []),
+
     ("São Paulo", "Sao Paulo", "BR", "São Paulo", -23.5505, -46.6333, "America/Sao_Paulo",
      12330000, False, [
          ("GRU", "SBGR", "São Paulo/Guarulhos International Airport", "Guarulhos", 0),
@@ -289,7 +336,7 @@ ALIASES: list[tuple[str, str, str | None, str]] = [
     # to name resolution which will surface both Brussels-BE and the US
     # town as alternatives.
     ("brussels", "local", "BE", "Brussels"),
-    ("brussels", "local", "US", "New York"),  # the US town called Brussels
+    ("brussels", "local", "US", "Brussels"),  # Brussels, Wisconsin
     ("bruxelles", "local", "BE", "Brussels"),
     ("brussel", "local", "BE", "Brussels"),
     ("bru", "iata", None, "Brussels"),
@@ -424,19 +471,31 @@ async def seed_reference_data(session: AsyncSession) -> dict[str, int]:
 
     # 3. Aliases (depend on cities)
     for (alias_display, alias_kind, country_bias, target_ascii) in ALIASES:
-        # We resolve the target by ascii_name (we control both sides)
-        target = (
-            await session.execute(select(City).where(City.ascii_name == target_ascii))
-        ).scalar_one_or_none()
+        # We resolve the target by ascii_name (we control both sides).
+        # Some aliases (e.g. "brussels" BE vs US) share the same
+        # ascii_name; the country_bias disambiguates them. If no bias,
+        # pick the city with that ascii_name in the same country as
+        # the bias, falling back to the highest-population match.
+        target = None
+        if country_bias:
+            target = (
+                await session.execute(
+                    select(City).where(
+                        City.ascii_name == target_ascii,
+                        City.country_alpha2 == country_bias,
+                    )
+                )
+            ).scalar_one_or_none()
         if target is None:
-            # Fallback: target_ascii was likely a non-ASCII name (e.g.
-            # "São Paulo" with tilde); normalise to find the matching row.
+            # Fallback: target_ascii might be non-ASCII ("São Paulo").
             target_norm = _norm_for_seed(target_ascii)
             target = (
                 await session.execute(
-                    select(City).where(City.ascii_name == target_norm.title())
+                    select(City).where(City.ascii_name == target_ascii)
+                    if target_ascii == target_norm.title()
+                    else select(City).where(City.ascii_name == target_norm.title())
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
         if target is None:
             logger.warning("alias %r -> %r: target city not found, skipping", alias_display, target_ascii)
             continue
