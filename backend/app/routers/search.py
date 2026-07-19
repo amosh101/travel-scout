@@ -127,14 +127,21 @@ def _pick_best_geocode(results: list[GeocodeResult], query: str) -> GeocodeResul
     if len(results) == 1:
         return results[0]
 
-    # Did the user include a country hint? If so, the first hit is correct.
-    q_lower = query.lower()
-    has_country_hint = any(
-        k in q_lower
-        for k in ("belgium", "france", "italy", "spain", "germany",
-                  "netherlands", "uk", "united kingdom", "usa", "us",
-                  "japan", "china", "australia", "brazil", "argentina",
-                  "south africa", "mozambique", "kenya", "tanzania")
+    # Did the user include a country hint? Use whole-word match so we
+    # don't false-trigger on substrings like "us" in "brussels".
+    q_lower = query.lower().strip()
+    _COUNTRY_HINT_WORDS = {
+        "belgium", "france", "italy", "spain", "germany", "portugal",
+        "netherlands", "uk", "united kingdom", "usa", "america",
+        "japan", "china", "australia", "brazil", "argentina",
+        "south africa", "mozambique", "kenya", "tanzania", "india",
+        "switzerland", "austria", "hungary", "poland", "ireland",
+        "sweden", "norway", "denmark", "finland", "greece", "turkey",
+        "mexico", "canada", "iceland", "croatia", "romania", "bulgaria",
+    }
+    q_tokens = set(re.findall(r"[a-z]+", q_lower))
+    has_country_hint = bool(q_tokens & _COUNTRY_HINT_WORDS) or bool(
+        re.search(r",\s*[A-Za-z]{2,3}\s*$", query)
     )
     if has_country_hint:
         return results[0]
