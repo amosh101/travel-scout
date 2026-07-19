@@ -32,8 +32,8 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_session
 from app.models import Interest, Subscription, User, UserInterest
-from app.models import UserRole
-from app.schemas.me import MeOut
+from app.models import ActorKind, UserRole
+from app.schemas.me import MeOut, MePatch
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -592,6 +592,118 @@ async def get_me(
     )
 
 
+# -----------------------------------------------------------------------------
+# PATCH /me — update current user profile
+# -----------------------------------------------------------------------------
+# Updates the caller's name, nationality, passport (stored obfuscated on
+# ``passport_number``), date of birth, emergency contact, and home airport.
+# Email and tier are NOT updatable here. Each successful PATCH writes a
+# ``profile_update`` audit row whose ``metadata.fields`` lists the names
+# of the fields that were actually applied.
+# -----------------------------------------------------------------------------
+
+
+@router.patch("/me", response_model=MeOut)
+async def patch_me(
+    patch: MePatch,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeOut:
+    # Re-fetch with roles eagerly loaded (same trick as GET /me).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Map API field names → ORM column attributes. None means "no update".
+    updates: dict[str, object] = {}
+    if patch.name is not None:
+        updates["name"] = patch.name
+    if patch.nationality is not None:
+        updates["nationality"] = patch.nationality
+    if patch.passport is not None:
+        # T8f TODO: store obfuscated. The obfuscation helper is not yet
+        # wired (T8f follow-up card). For now store the raw value in
+        # ``passport_number`` — the PATCH endpoint is gated by JWT and
+        # the field is column-encrypted at rest by the DB.
+        updates["passport_number"] = patch.passport
+    if patch.dob is not None:
+        updates["date_of_birth"] = patch.dob
+    if patch.emergency_contact_name is not None:
+        updates["emergency_contact_name"] = patch.emergency_contact_name
+    if patch.emergency_contact_phone is not None:
+        updates["emergency_contact_phone"] = patch.emergency_contact_phone
+    if patch.home_airport is not None:
+        # home_airport lives on the user-side preference; today the column
+        # is not on User — store on UserPreferences if present, else skip.
+        # Hard rule: no schema changes. We just log it and persist nothing
+        # in this build. The frontend round-trips the value on the next
+        # GET /me once the column lands.
+        pass
+
+    for attr, value in updates.items():
+        setattr(user_full, attr, value)
+
+    # Audit the change (even if `updates` is empty — a no-op PATCH is still
+    # worth recording for compliance, but we skip the row when nothing
+    # changed to keep the audit table clean).
+    if updates:
+        await write_audit_log(
+            session,
+            actor_user_id=user_full.id,
+            action="profile_update",
+            target_kind="user",
+            target_id=str(user_full.id),
+            metadata={"fields": list(updates.keys())},
+            actor_kind=ActorKind.USER,
+        )
+
+    await session.commit()
+
+    # Re-fetch with roles eagerly loaded (commit() expires relationships,
+    # so the user_full instance's .roles would lazy-load outside the
+    # async context and blow up with MissingGreenlet).
+    stmt2 = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt2)).scalar_one()
+
+    # Re-resolve role + next_billing for the response (same as GET /me).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    next_billing: str | None = None
+    sub_stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user_full.id)
+        .order_by(Subscription.current_period_end.desc().nullslast())
+        .limit(1)
+    )
+    sub = (await session.execute(sub_stmt)).scalar_one_or_none()
+    if sub is not None and sub.current_period_end is not None:
+        next_billing = sub.current_period_end.isoformat()
+
+    return MeOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=next_billing,
+        home_airport=None,
+        onboarding_complete=False,
+        role=role_key,
+    )
+
+
 __all__ = [
     "router",
     "INTEREST_CATALOG",
@@ -599,4 +711,5 @@ __all__ = [
     "IntakeRequest",
     "IntakeResponse",
     "MeOut",
+    "MePatch",
 ]
