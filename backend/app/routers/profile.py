@@ -28,9 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_session
-from app.models import Interest, User, UserInterest
+from app.models import Interest, Subscription, User, UserInterest
+from app.models import UserRole
+from app.schemas.me import MeOut
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -530,10 +533,70 @@ async def list_destinations() -> dict[str, Any]:
     return {"items": DESTINATION_CHIPS, "count": len(DESTINATION_CHIPS)}
 
 
+# -----------------------------------------------------------------------------
+# GET /me — current user summary
+# -----------------------------------------------------------------------------
+# Returns the authenticated user's id, email, name, tier, next billing date,
+# home airport, onboarding flag, and primary role. The user model does not
+# yet carry home_airport / onboarding_complete; we return None / False until a
+# migration adds them. Role is derived from the first non-revoked UserRole;
+# users with no role assignment default to "user".
+# -----------------------------------------------------------------------------
+
+
+@router.get("/me", response_model=MeOut)
+async def get_me(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeOut:
+    # Re-fetch the user with roles eagerly loaded (lazy load would fail
+    # after the auth dependency's session is consumed).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Resolve primary role (first non-revoked assignment).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    # Resolve next billing date: most recent subscription's
+    # current_period_end. Free users have no subscription rows.
+    next_billing: str | None = None
+    sub_stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user_full.id)
+        .order_by(Subscription.current_period_end.desc().nullslast())
+        .limit(1)
+    )
+    sub = (await session.execute(sub_stmt)).scalar_one_or_none()
+    if sub is not None and sub.current_period_end is not None:
+        next_billing = sub.current_period_end.isoformat()
+
+    return MeOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=next_billing,
+        home_airport=None,
+        onboarding_complete=False,
+        role=role_key,
+    )
+
+
 __all__ = [
     "router",
     "INTEREST_CATALOG",
     "DESTINATION_CHIPS",
     "IntakeRequest",
     "IntakeResponse",
+    "MeOut",
 ]
