@@ -32,6 +32,8 @@ from app.clients import (
     build_osrm_client,
     build_overpass_client,
 )
+from app.clients.location_resolver import build_location_resolver
+from app.refdata.iso3166 import resolve_alpha2 as _resolve_country_alpha2
 from app.database import get_session
 from app.models import (
     ActorKind,
@@ -193,26 +195,122 @@ async def _build_itinerary_for(
         d_lon = res_d["city"]["longitude"]
         d_name = res_d["city"]["name"]
         d_country_name = res_d["country"]["name"]
+        # CROSS-CHECK: if refdata surfaced alternatives (e.g. Paris
+        # could be FR, US, or CA), validate against the LocationResolver
+        # consensus (Nominatim + Wikidata + ISO 3166-1). The resolver
+        # uses Wikidata's "largest city wins" heuristic via SPARQL
+        # ORDER BY DESC(population), so the famous city wins.
+        has_alternatives = bool(res.alternatives)
+        hint_disagrees = (
+            candidate_country_hint
+            and d_country != candidate_country_hint.upper()
+        )
+        # Always cross-check when no country hint was given — the
+        # refdata DB may have a single alias for a famous city
+        # (Paris -> US Texas) and we need the resolver consensus to
+        # pick the right one. The resolver is fast (~200ms cached)
+        # so this is cheap.
+        no_hint = not candidate_country_hint
+        if has_alternatives or hint_disagrees or no_hint:
+            try:
+                resolver = build_location_resolver()
+                # IMPORTANT: when no country hint was given, pass
+                # None to the resolver so it consensus-validates
+                # without bias. If we passed d_country (the refdata
+                # pick) as a hint, the resolver would just confirm
+                # the wrong pick. When a hint IS given, pass it so
+                # the resolver can confirm or override.
+                cross_cc = (
+                    candidate_country_hint.upper()
+                    if candidate_country_hint
+                    else None
+                )
+                loc = await resolver.resolve(candidate_name, cross_cc, timeout=4.0)
+                # Sanity: if the resolver returned a *different*
+                # country with a confident consensus, swap. If the
+                # user gave a hint and the resolver agreed, we keep
+                # the refdata pick (or overwrite, since they're the
+                # same anyway). If the resolver returned the same
+                # country as refdata, no-op.
+                if (
+                    loc.has_country
+                    and loc.country_alpha2 != d_country
+                    and loc.latitude is not None
+                    and loc.confidence >= 0.5
+                ):
+                    logger.info(
+                        "Disambiguated %r: refdata=%s -> resolver=%s (%.0f%% confidence)",
+                        candidate_name, d_country, loc.country_alpha2,
+                        loc.confidence * 100,
+                    )
+                    d_country = loc.country_alpha2
+                    d_country_name = loc.country_name_en
+                    if loc.locality:
+                        d_name = loc.locality
+                    if loc.latitude is not None:
+                        d_lat = loc.latitude
+                    if loc.longitude is not None:
+                        d_lon = loc.longitude
+                    sources_used.append("location_resolver")
+            except Exception as e:  # noqa: BLE001
+                logger.debug("LocationResolver cross-check failed: %s", e)
     else:
-        # 2. Fall back to Nominatim
+        # 2. Fall back to Nominatim, then cross-validate with the
+        # LocationResolver (Nominatim + Wikidata SPARQL + bundled ISO
+        # 3166-1). This is the fix for "Paris" -> Texas: if the user
+        # typed a famous city name that has multiple matches, the
+        # resolver picks the most populous one (Paris-FR > Paris-TX).
         q = candidate_name
         if candidate_country_hint and "," not in q:
             q = f"{q}, {candidate_country_hint}"
         try:
-            results = await nomi.geocode(q, limit=1)
+            results = await nomi.geocode(q, limit=5)
         except Exception as e:  # noqa: BLE001
             logger.warning("Nominatim failed for %s: %s", q, e)
             results = []
         if not results:
             return None, None
-        d = results[0]
+        # Pick the most important result unless we have a country hint
+        # that disagrees — in which case try the resolver instead.
+        if candidate_country_hint:
+            best = None
+            for r in results:
+                if (r.country_code or "").upper() == candidate_country_hint.upper():
+                    best = r
+                    break
+            if best is None:
+                best = max(results, key=lambda r: float(r.importance or 0))
+        else:
+            best = max(results, key=lambda r: float(r.importance or 0))
         if "nominatim" not in sources_used:
             sources_used.append("nominatim")
-        d_country = (d.country_code or "").upper() or (candidate_country_hint or "").upper()
-        d_lat = d.lat
-        d_lon = d.lon
-        d_name = d.display_name.split(",")[0].strip()
-        d_country_name = d.display_name.split(",")[-1].strip()
+        d_country = (best.country_code or "").upper() or (candidate_country_hint or "").upper()
+        d_lat = best.lat
+        d_lon = best.lon
+        d_name = best.display_name.split(",")[0].strip()
+        d_country_name = best.display_name.split(",")[-1].strip()
+        # If a country hint was given and doesn't match, try the
+        # LocationResolver to find the right one. This catches cases
+        # where Nominatim returns a low-importance match (e.g. Paris,
+        # Texas) over the famous one (Paris, France) when the user
+        # didn't provide a hint.
+        if candidate_country_hint and d_country != candidate_country_hint.upper():
+            try:
+                resolver = build_location_resolver()
+                loc = await resolver.resolve(candidate_name, candidate_country_hint.upper())
+                if loc.has_country and loc.country_alpha2 == candidate_country_hint.upper():
+                    # Overwrite with the resolver's pick
+                    d_country = loc.country_alpha2
+                    d_country_name = loc.country_name_en
+                    if loc.locality:
+                        d_name = loc.locality
+                    if loc.latitude is not None:
+                        d_lat = loc.latitude
+                    if loc.longitude is not None:
+                        d_lon = loc.longitude
+                    sources_used.append("location_resolver")
+            except Exception as e:  # noqa: BLE001
+                logger.debug("LocationResolver cross-check failed: %s", e)
 
     duration = (date_to - date_from).days + 1
     route = None
@@ -603,6 +701,7 @@ async def _build_itinerary_for(
         pitch=pitch,
         destination=d_name,
         destination_country=country_label,
+        destination_country_code=d_country or None,
         start_date=it_start.isoformat(),
         end_date=it_end.isoformat(),
         duration_days=duration,
@@ -876,13 +975,24 @@ async def _discover_for_user(
         it.rank = idx
         d = asdict(it)
         d["origin_iata"] = origin_iata
-        # Resolve destination IATA via refdata
-        dest_res = await ref_enrich.resolve(it.destination)
+        # Resolve destination IATA via refdata. We use the country
+        # bias we already determined in the build phase (which has
+        # been cross-validated against the LocationResolver) so the
+        # IATA lookup is consistent with the rest of the response.
+        dest_res = await ref_enrich.resolve(
+            it.destination,
+            country_bias=it.destination_country_code,
+        )
         dest_res_d = dest_res.to_dict()
         d["destination_iata"] = (
             dest_res_d["airport"]["iata"] if dest_res_d.get("airport") else None
         )
-        d["destination_country_alpha2"] = dest_res_d["country"]["alpha2"] if dest_res_d.get("country") else None
+        # The build phase already set destination_country_code via
+        # the LocationResolver cross-check. We override what the
+        # refdata re-resolution returns because the refdata may
+        # have picked a different (smaller) city with the same
+        # name. Trust the consensus pick.
+        d["destination_country_alpha2"] = it.destination_country_code
         d["destination_city_id"] = dest_res_d["city"]["id"] if dest_res_d.get("city") else None
         # T8a: per-event window from the build phase (keyed by destination
         # name so the post-sort rank doesn't matter).
@@ -1063,12 +1173,24 @@ async def _discover_anonymous(
         it.rank = idx
         d = asdict(it)
         d["origin_iata"] = origin_iata
-        dest_res = await ref_enrich.resolve(it.destination)
+        # Resolve destination IATA via refdata, biased to the
+        # country we picked in the build phase (which has been
+        # cross-validated against the LocationResolver). The build
+        # phase already set it.destination_country_code so the
+        # refdata doesn't re-pick the wrong country.
+        dest_res = await ref_enrich.resolve(
+            it.destination,
+            country_bias=it.destination_country_code,
+        )
         dest_res_d = dest_res.to_dict()
         d["destination_iata"] = (
             dest_res_d["airport"]["iata"] if dest_res_d.get("airport") else None
         )
-        d["destination_country_alpha2"] = dest_res_d["country"]["alpha2"] if dest_res_d.get("country") else None
+        # Override what the refdata re-resolution returns: the
+        # build phase's country pick is the consensus and the
+        # refdata IATA-only lookup is allowed to disagree about
+        # lat/lon but not about country.
+        d["destination_country_alpha2"] = it.destination_country_code
         d["destination_city_id"] = dest_res_d["city"]["id"] if dest_res_d.get("city") else None
         d["event_window"] = event_windows_by_dest.get(it.destination)
         enriched_results.append(d)

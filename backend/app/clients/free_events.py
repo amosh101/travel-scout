@@ -15,6 +15,12 @@ Currently wired:
     date range. Free, CC0.
   - **Wikipedia "list of" articles**: text-mined for top annual events
     per city. Free, CC-BY-SA.
+  - **LocationResolver** (ISO 3166-1 cross-validated) — every event
+    location is normalised to a fully-populated ``Location`` object
+    (alpha-2/3/numeric, ISO 3166-2 subdivision, ISO 6709 coordinates,
+    UN M49 region, GeoNames ID, Wikidata QID). Country matches are
+    consensus-validated across Nominatim, Wikidata SPARQL, GeoNames
+    (optional) and the bundled ISO 3166-1 dataset.
 
 Planned but deferred (need admin to provide a public/free endpoint):
   - Bandsintown (now requires app key)
@@ -35,6 +41,15 @@ from urllib.parse import quote
 
 from curl_cffi import requests
 
+from app.refdata.iso3166 import (
+    ALPHA2_TO_WIKIDATA_QID,
+    IOC_TO_ALPHA2,
+    M49_TO_REGION_NAME,
+    country as iso_country,
+    resolve_alpha2,
+)
+from app.schemas.location import Location, GeoSource
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,11 +59,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EventRecord:
-    """One event that the intersection algorithm can rank and surface."""
+    """One event that the intersection algorithm can rank and surface.
+
+    Every event carries a fully-validated ``Location`` (ISO 3166-1
+    alpha-2/3/numeric, ISO 3166-2 subdivision, ISO 6709 coordinates,
+    UN M49 region, Wikidata QID, GeoNames ID). The string fields
+    ``city`` / ``country`` / ``country_alpha2`` / ``latitude`` /
+    ``longitude`` are kept populated as backward-compat aliases derived
+    from ``location`` — the front-end and router code may continue to
+    read them directly.
+    """
     name: str
     kind: str                       # "f1_race" | "music_festival" | "sport_match" | "exhibition" | ...
     starts_at: date | None = None
     ends_at: date | None = None
+    location: Location | None = None
     city: str = ""
     country: str = ""
     country_alpha2: str = ""
@@ -59,11 +84,39 @@ class EventRecord:
     source_qid: str = ""            # Wikidata QID for dedupe / linking
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Keep the legacy string fields in sync with the be in sync
+        if self.location:
+            if not self.city and self.location.locality:
+                self.city = self.location.locality
+            if not self.country and self.location.country_name_en:
+                self.country = self.location.country_name_en
+            if not self.country_alpha2 and self.location.country_alpha2:
+                self.country_alpha2 = self.location.country_alpha2
+            if self.latitude is None and self.location.latitude is not None:
+                self.latitude = self.location.latitude
+            if self.longitude is None and self.location.longitude is not None:
+                self.longitude = self.location.longitude
+        else:
+            # No Location attached — best-effort backfill from the
+            # bare string fields. This keeps the legacy callers working
+            # while we migrate the rest of the codebase.
+            if self.country_alpha2 and not self.country:
+                rec = iso_country(self.country_alpha2)
+                if rec:
+                    self.country = rec.get("name_en", "")
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["starts_at"] = self.starts_at.isoformat() if self.starts_at else None
         d["ends_at"] = self.ends_at.isoformat() if self.ends_at else None
+        if self.location is not None:
+            d["location"] = self.location.to_dict()
         return d
+
+    @property
+    def has_iso_country(self) -> bool:
+        return bool(self.country_alpha2) and len(self.country_alpha2) == 2
 
 
 # -----------------------------------------------------------------------------
@@ -200,7 +253,7 @@ class WikidataEventsClient:
         # Country code -> Wikidata country Q-ID. The simplest mapping.
         # For 90% of queries we don't have this; if we don't, query
         # without the country filter and let the caller filter.
-        country_qid = _ALPHA2_TO_QID.get((country_alpha2 or "").upper())
+        country_qid = ALPHA2_TO_WIKIDATA_QID.get((country_alpha2 or "").upper())
 
         sparql = self._build_query(
             event_types=event_types,
@@ -342,13 +395,28 @@ class WikidataEventsClient:
                 pass
         qid = b.get("event", {}).get("value", "").rsplit("/", 1)[-1]
         genre = b.get("genreLabel", {}).get("value", "").strip()
+        # Resolve the country label to an alpha-2. Wikidata may give us
+        # a full English country name (e.g. "Mozambique"), a label that
+        # starts with "Q" (unresolved), or a local-language name. We
+        # normalise via the ISO 3166-1 dataset.
+        country_alpha2 = ""
+        if country and not country.startswith("Q"):
+            country_alpha2 = resolve_alpha2(country)
+        location = None
+        if country_alpha2:
+            location = _build_location(country_alpha2, country, city)
+            if lat is not None and lon is not None:
+                location.latitude = lat
+                location.longitude = lon
         return EventRecord(
             name=name,
             kind=_KIND_BY_INTEREST.get(self._interest_hint(b), "event"),
             starts_at=starts,
             ends_at=ends,
+            location=location,
             city=city or "",
             country=country or "",
+            country_alpha2=country_alpha2 or "",
             latitude=lat,
             longitude=lon,
             source="wikidata",
@@ -383,58 +451,53 @@ class WikidataEventsClient:
 _KIND_BY_INTEREST: dict[str, str] = {}
 
 
-# Alpha-2 -> Wikidata Q-ID for the 80+ countries most likely to appear
-# in user searches. The full mapping is at
-# https://www.wikidata.org/wiki/Special:EntityData/Q6256.json but we only
-# need the common ones.
-_ALPHA2_TO_QID: dict[str, str] = {
-    "AD": "Q228", "AE": "Q878", "AF": "Q889", "AL": "Q222", "AM": "Q399",
-    "AO": "Q916", "AR": "Q414", "AT": "Q40", "AU": "Q408", "AZ": "Q227",
-    "BA": "Q225", "BB": "Q244", "BD": "Q902", "BE": "Q31", "BF": "Q965",
-    "BG": "Q219", "BH": "Q398", "BI": "Q967", "BJ": "Q962", "BN": "Q921",
-    "BO": "Q750", "BR": "Q155", "BS": "Q778", "BT": "Q917", "BW": "Q963",
-    "BY": "Q184", "BZ": "Q242", "CA": "Q16", "CD": "Q974", "CF": "Q929",
-    "CG": "Q971", "CH": "Q39", "CI": "Q1008", "CL": "Q298", "CM": "Q1009",
-    "CN": "Q148", "CO": "Q739", "CR": "Q800", "CU": "Q241", "CV": "Q1011",
-    "CY": "Q229", "CZ": "Q213", "DE": "Q183", "DJ": "Q977", "DK": "Q35",
-    "DM": "Q784", "DO": "Q786", "DZ": "Q262", "EC": "Q736", "EE": "Q191",
-    "EG": "Q79", "EH": "Q4030", "ER": "Q986", "ES": "Q29", "ET": "Q115",
-    "FI": "Q33", "FJ": "Q712", "FK": "Q964", "FM": "Q691", "FR": "Q142",
-    "GA": "Q1000", "GB": "Q145", "GD": "Q769", "GE": "Q230", "GF": "Q3763",
-    "GH": "Q117", "GL": "Q223", "GM": "Q1005", "GN": "Q1006", "GP": "Q17075",
-    "GQ": "Q983", "GR": "Q41", "GT": "Q774", "GW": "Q1007", "GY": "Q734",
-    "HN": "Q783", "HR": "Q224", "HT": "Q790", "HU": "Q28", "ID": "Q252",
-    "IE": "Q27", "IL": "Q801", "IN": "Q668", "IQ": "Q796", "IR": "Q794",
-    "IS": "Q189", "IT": "Q38", "JM": "Q766", "JO": "Q810", "JP": "Q17",
-    "KE": "Q114", "KG": "Q813", "KH": "Q424", "KI": "Q710", "KM": "Q970",
-    "KN": "Q763", "KP": "Q423", "KR": "Q884", "KW": "Q817", "KY": "Q5785",
-    "KZ": "Q232", "LA": "Q819", "LB": "Q822", "LC": "Q760", "LI": "Q347",
-    "LK": "Q854", "LR": "Q1014", "LS": "Q1013", "LT": "Q37", "LU": "Q32",
-    "LV": "Q211", "LY": "Q1016", "MA": "Q1028", "MC": "Q235", "MD": "Q217",
-    "ME": "Q236", "MG": "Q1019", "MH": "Q709", "MK": "Q221", "ML": "Q912",
-    "MM": "Q836", "MN": "Q711", "MR": "Q1025", "MT": "Q233", "MU": "Q1027",
-    "MV": "Q826", "MW": "Q1020", "MX": "Q96", "MY": "Q833", "MZ": "Q1029",
-    "NA": "Q1030", "NE": "Q1032", "NG": "Q1033", "NI": "Q811", "NL": "Q55",
-    "NO": "Q20", "NP": "Q837", "NR": "Q697", "NZ": "Q664", "OM": "Q842",
-    "PA": "Q804", "PE": "Q419", "PG": "Q691", "PH": "Q928", "PK": "Q843",
-    "PL": "Q36", "PR": "Q1183", "PS": "Q4030", "PT": "Q45", "PW": "Q695",
-    "PY": "Q733", "QA": "Q846", "RO": "Q218", "RS": "Q403", "RU": "Q159",
-    "RW": "Q1037", "SA": "Q851", "SB": "Q685", "SC": "Q1042", "SD": "Q1049",
-    "SE": "Q34", "SG": "Q334", "SI": "Q215", "SK": "Q214", "SL": "Q1039",
-    "SM": "Q238", "SN": "Q1041", "SO": "Q1045", "SR": "Q730", "SS": "Q958",
-    "ST": "Q1039", "SV": "Q792", "SY": "Q858", "SZ": "Q1050", "TD": "Q657",
-    "TG": "Q945", "TH": "Q869", "TJ": "Q863", "TL": "Q5743", "TM": "Q874",
-    "TN": "Q948", "TO": "Q678", "TR": "Q43", "TT": "Q754", "TV": "Q672",
-    "TW": "Q865", "TZ": "Q924", "UA": "Q212", "UG": "Q1036", "US": "Q30",
-    "UY": "Q77", "UZ": "Q265", "VC": "Q757", "VE": "Q717", "VN": "Q881",
-    "VU": "Q686", "WS": "Q683", "XK": "Q302824", "YE": "Q805", "ZA": "Q258",
-    "ZM": "Q953", "ZW": "Q954",
-}
-
+# (Country code -> Wikidata QID) is now sourced from
+# app.refdata.iso3166.ALPHA2_TO_WIKIDATA_QID (the bundled ISO 3166-1
+# dataset covers all 250 countries; the inline copy above is removed
+# in favour of the authoritative one).
 
 # -----------------------------------------------------------------------------
 # Wikipedia "List of" articles (fallback for events not in Wikidata)
 # -----------------------------------------------------------------------------
+
+
+def _build_location(
+    country_alpha2: str,
+    country_name: str = "",
+    locality: str = "",
+) -> Location:
+    """Build a Location from a Wikipedia row.
+
+    Pulls the full ISO record from the bundled dataset (alpha-2/3,
+    numeric, English name, UN M49 region) and attaches the locality
+    the parser extracted. Lat/lon, GeoNames, Wikidata QID and ISO
+    3166-2 subdivision are NOT filled here — the consumer can call
+    ``LocationResolver.resolve()`` asynchronously for those if
+    needed (network round-trip).
+    """
+    rec = iso_country(country_alpha2) or {}
+    return Location.now(
+        country_alpha2=rec.get("alpha2", country_alpha2.upper()),
+        country_alpha3=rec.get("alpha3", ""),
+        country_numeric=rec.get("numeric", ""),
+        country_name_en=rec.get("name_en", "") or country_name,
+        locality=locality or "",
+        display_name=f"{locality}, {rec.get('alpha2', country_alpha2.upper())}" if locality else rec.get("name_en", country_alpha2),
+        region_code=rec.get("m49_region", ""),
+        region_name=M49_TO_REGION_NAME.get(rec.get("m49_region", ""), ""),
+        wikidata_qid=ALPHA2_TO_WIKIDATA_QID.get(country_alpha2.upper(), ""),
+        sources=[GeoSource(
+            source="wikipedia",
+            country_alpha2=rec.get("alpha2", country_alpha2.upper()),
+            country_alpha3=rec.get("alpha3", ""),
+            country_numeric=rec.get("numeric", ""),
+            locality=locality or "",
+            matched=True,
+        )],
+        confidence=0.7,  # Wikipedia "list" rows are accurate but
+                          # not cross-validated against the resolver
+    )
+
 
 class WikipediaListClient:
     """Pull annual events from Wikipedia "List of" articles.
@@ -885,7 +948,7 @@ class WikipediaListClient:
                     code = fm.group(1).upper()
                     country_alpha2 = (
                         code if len(code) == 2
-                        else _IOC_TO_ALPHA2.get(code, "")
+                        else IOC_TO_ALPHA2.get(code, "")
                     )
                     if country_alpha2:
                         break
@@ -894,7 +957,7 @@ class WikipediaListClient:
                     parts = [p.strip() for p in cell_clean.split(",") if p.strip()]
                     if len(parts) >= 2:
                         last = parts[-1]
-                        mapped = _COUNTRY_DISPLAY_TO_ALPHA2.get(last.lower(), "")
+                        mapped = resolve_alpha2(last)
                         if mapped:
                             country_alpha2 = mapped
                             country = last
@@ -902,16 +965,21 @@ class WikipediaListClient:
                             break
                 # Bare country name in a single cell.
                 if cell_clean and not country_alpha2:
-                    mapped = _COUNTRY_DISPLAY_TO_ALPHA2.get(cell_clean.lower(), "")
+                    mapped = resolve_alpha2(cell_clean)
                     if mapped:
                         country_alpha2 = mapped
                         country = cell_clean
                         break
             # If we still don't have a country, drop the row entirely
             # — strict filter (see _filter) requires it.
+            if country_alpha2:
+                loc = _build_location(country_alpha2, country, city or name)
+            else:
+                loc = None
             out.append(EventRecord(
                 name=name,
                 kind=kind,
+                location=loc,
                 city=city or (current_row_cells[1] if len(current_row_cells) > 1 else name),
                 country=country or "",
                 country_alpha2=country_alpha2 or "",
@@ -961,8 +1029,7 @@ class WikipediaListClient:
                             country = alpha2
                         else:
                             # Three-letter IOC code -> alpha2 via our map.
-                            mapped = _IOC_TO_ALPHA2.get(alpha2, "")
-                            country = mapped
+                            country = IOC_TO_ALPHA2.get(alpha2, "")
                     if not country:
                         # Fall back to "City, Country" inside the link text.
                         if "," in name:
@@ -971,12 +1038,13 @@ class WikipediaListClient:
                             country = parts[1].strip()
                     country_alpha2 = (
                         country if len(country) == 2
-                        else _COUNTRY_DISPLAY_TO_ALPHA2.get(country.lower(), country)
+                        else resolve_alpha2(country)
                     )
                     starts_at = self._extract_month(line)
                     out.append(EventRecord(
                         name=name,
                         kind=kind,
+                        location=_build_location(country_alpha2, country, city) if country_alpha2 else None,
                         city=city or name,
                         country=country or "",
                         country_alpha2=country_alpha2 or "",
@@ -1033,159 +1101,13 @@ _MONTHS = {
 }
 
 
-# Country display name -> alpha-2 (lowercase, the values match the
-# country fields in Wikipedia tables). Includes every common variant
-# the wikitext parser encounters: abbreviations, demonyms, US/UK
-# sub-nationals mapped to their country, and historical names.
-_COUNTRY_DISPLAY_TO_ALPHA2: dict[str, str] = {
-    # Full names
-    "albania": "AL", "algeria": "DZ", "argentina": "AR", "armenia": "AM",
-    "australia": "AU", "austria": "AT", "azerbaijan": "AZ", "bahrain": "BH",
-    "bangladesh": "BD", "belarus": "BY", "belgium": "BE", "bolivia": "BO",
-    "bosnia and herzegovina": "BA", "brazil": "BR", "bulgaria": "BG",
-    "cambodia": "KH", "canada": "CA", "chile": "CL", "china": "CN",
-    "colombia": "CO", "costa rica": "CR", "croatia": "HR", "cuba": "CU",
-    "cyprus": "CY", "czech republic": "CZ", "czechia": "CZ",
-    "denmark": "DK", "dominican republic": "DO", "ecuador": "EC",
-    "egypt": "EG", "el salvador": "SV", "estonia": "EE", "ethiopia": "ET",
-    "finland": "FI", "france": "FR", "georgia": "GE", "germany": "DE",
-    "ghana": "GH", "greece": "GR", "guatemala": "GT", "honduras": "HN",
-    "hungary": "HU", "iceland": "IS", "india": "IN", "indonesia": "ID",
-    "iran": "IR", "iraq": "IQ", "ireland": "IE", "israel": "IL",
-    "italy": "IT", "jamaica": "JM", "japan": "JP", "jordan": "JO",
-    "kazakhstan": "KZ", "kenya": "KE", "kuwait": "KW", "kyrgyzstan": "KG",
-    "laos": "LA", "latvia": "LV", "lebanon": "LB", "libya": "LY",
-    "liechtenstein": "LI", "lithuania": "LT", "luxembourg": "LU",
-    "macedonia": "MK", "north macedonia": "MK", "malaysia": "MY",
-    "maldives": "MV", "malta": "MT", "mexico": "MX", "moldova": "MD",
-    "monaco": "MC", "mongolia": "MN", "montenegro": "ME", "morocco": "MA",
-    "mozambique": "MZ", "myanmar": "MM", "nepal": "NP", "netherlands": "NL",
-    "new zealand": "NZ", "nicaragua": "NI", "nigeria": "NG", "norway": "NO",
-    "oman": "OM", "pakistan": "PK", "palestine": "PS", "panama": "PA",
-    "paraguay": "PY", "peru": "PE", "philippines": "PH", "poland": "PL",
-    "portugal": "PT", "qatar": "QA", "romania": "RO", "russia": "RU",
-    "rwanda": "RW", "saudi arabia": "SA", "senegal": "SN", "serbia": "RS",
-    "singapore": "SG", "slovakia": "SK", "slovenia": "SI",
-    "south africa": "ZA", "south korea": "KR", "korea": "KR",
-    "spain": "ES", "sri lanka": "LK", "sudan": "SD", "sweden": "SE",
-    "switzerland": "CH", "syria": "SY", "taiwan": "TW", "tajikistan": "TJ",
-    "tanzania": "TZ", "thailand": "TH", "tunisia": "TN", "turkey": "TR",
-    "türkiye": "TR", "turkmenistan": "TM", "uganda": "UG", "ukraine": "UA",
-    "united arab emirates": "AE", "united kingdom": "GB",
-    "united states": "US", "uruguay": "UY", "uzbekistan": "UZ",
-    "venezuela": "VE", "vietnam": "VN", "yemen": "YE", "zambia": "ZM",
-    "zimbabwe": "ZW",
-    # Common abbreviations (Wikipedia tables use these)
-    "u.s.": "US", "u.s.a.": "US", "usa": "US", "us": "US",
-    "u.k.": "GB", "uk": "GB", "great britain": "GB", "britain": "GB",
-    "uae": "AE", "u.a.e.": "AE",
-    "nz": "NZ", "aus": "AU", "ger": "DE", "fra": "FR", "ita": "IT",
-    "esp": "ES", "por": "PT", "ned": "NL", "sui": "CH", "den": "DK",
-    "swe": "SE", "nor": "NO", "fin": "FI", "pol": "PL", "cze": "CZ",
-    "hun": "HU", "aut": "AT", "ire": "IE", "sco": "GB", "wal": "GB",
-    "eng": "GB", "arg": "AR", "bra": "BR", "chi": "CL", "mex": "MX",
-    "jpn": "JP", "chn": "CN", "kor": "KR", "ind": "IN", "tha": "TH",
-    "phi": "PH", "sin": "SG", "mas": "MY", "rsa": "ZA", "egy": "EG",
-    "mar": "MA", "nig": "NG", "ken": "KE", "tun": "TN",
-    # UK sub-nationals — Wikipedia tables list "England", "Scotland",
-    # "Wales", "Northern Ireland" as if they were countries. They're
-    # the UK (GB) for the purposes of this filter.
-    "england": "GB", "scotland": "GB", "wales": "GB",
-    "northern ireland": "GB", "cornwall": "GB", "kent": "GB",
-    # US states — Wikipedia tables often list state names instead of
-    # "United States" or "U.S." for the country. Map common ones to US.
-    "alabama": "US", "alaska": "US", "arizona": "US", "arkansas": "US",
-    "california": "US", "colorado": "US", "connecticut": "US",
-    "delaware": "US", "florida": "US", "georgia": "US", "hawaii": "US",
-    "idaho": "US", "illinois": "US", "indiana": "US", "iowa": "US",
-    "kansas": "US", "kentucky": "US", "louisiana": "US", "maine": "US",
-    "maryland": "US", "massachusetts": "US", "michigan": "US",
-    "minnesota": "US", "mississippi": "US", "missouri": "US",
-    "montana": "US", "nebraska": "US", "nevada": "US",
-    "new hampshire": "US", "new jersey": "US", "new mexico": "US",
-    "new york": "US", "north carolina": "US", "north dakota": "US",
-    "ohio": "US", "oklahoma": "US", "oregon": "US", "pennsylvania": "US",
-    "rhode island": "US", "south carolina": "US", "south dakota": "US",
-    "tennessee": "US", "texas": "US", "utah": "US", "vermont": "US",
-    "virginia": "US", "washington": "US", "west virginia": "US",
-    "wisconsin": "US", "wyoming": "US", "u.s": "US",
-    # Canadian provinces
-    "ontario": "CA", "quebec": "CA", "british columbia": "CA",
-    "alberta": "CA", "manitoba": "CA", "saskatchewan": "CA",
-    "nova scotia": "CA", "new brunswick": "CA",
-    # Australian states
-    "victoria": "AU", "queensland": "AU", "new south wales": "AU",
-    "western australia": "AU", "south australia": "AU", "tasmania": "AU",
-    # Chinese provinces / regions
-    "hong kong": "CN", "macau": "CN", "tibet": "CN", "tibetan": "CN",
-    # Indian states
-    "goa": "IN", "kerala": "IN", "tamil nadu": "IN", "karnataka": "IN",
-    "maharashtra": "IN", "rajasthan": "IN", "west bengal": "IN",
-    "andhra pradesh": "IN", "gujarat": "IN", "uttar pradesh": "IN",
-    # German states
-    "bavaria": "DE", "saxony": "DE", "berlin": "DE", "hamburg": "DE",
-    # Italian regions
-    "tuscany": "IT", "lombardy": "IT", "sicily": "IT", "sardinia": "IT",
-    # Spanish communities
-    "catalonia": "ES", "andalusia": "ES", "basque country": "ES",
-    "galicia": "ES", "valencia": "ES", "castile": "ES",
-    # French regions
-    "provence": "FR", "normandy": "FR", "brittany": "FR",
-    # Generic African / Asian / South American regions that show up
-    "east africa": "KE", "west africa": "NG", "north africa": "EG",
-    "south america": "BR", "central america": "MX",
-    "southeast asia": "TH", "east asia": "CN", "south asia": "IN",
-    # Sub-national / city-only entries the parser sometimes picks up
-    "cebu": "PH", "borneo": "MY", "java": "ID", "bali": "ID",
-    "sardegna": "IT", "sicilia": "IT",
-    "muslim": "", "christian": "", "buddhist": "", "hindu": "",
-}
-
-
-# IOC (International Olympic Committee) 3-letter country codes -> alpha-2.
-# Wikipedia's {{flag}} / {{flagicon}} templates accept the IOC code as
-# the parameter; e.g. {{flag|FRA}} means France. We need this because
-# some articles use 3-letter codes instead of 2-letter ISO.
-_IOC_TO_ALPHA2: dict[str, str] = {
-    "AFG": "AF", "ALB": "AL", "ALG": "DZ", "AND": "AD", "ANG": "AO",
-    "ARG": "AR", "ARM": "AM", "AUS": "AU", "AUT": "AT", "AZE": "AZ",
-    "BAH": "BS", "BRN": "BH", "BAN": "BD", "BAR": "BB", "BLR": "BY",
-    "BEL": "BE", "BIZ": "BZ", "BEN": "BJ", "BER": "BM", "BHU": "BT",
-    "BOL": "BO", "BIH": "BA", "BOT": "BW", "BRA": "BR", "BRU": "BN",
-    "BUL": "BG", "BFA": "BF", "BDI": "BI", "CAM": "KH", "CMR": "CM",
-    "CAN": "CA", "CPV": "CV", "CAF": "CF", "CHA": "TD", "CHI": "CL",
-    "CHN": "CN", "COL": "CO", "COM": "KM", "CGO": "CG", "COD": "CD",
-    "CRC": "CR", "CIV": "CI", "CRO": "HR", "CUB": "CU", "CYP": "CY",
-    "CZE": "CZ", "DEN": "DK", "DJI": "DJ", "DMA": "DM", "DOM": "DO",
-    "ECU": "EC", "EGY": "EG", "ESA": "SV", "GEQ": "GQ", "ERI": "ER",
-    "EST": "EE", "ETH": "ET", "FIJ": "FJ", "FIN": "FI", "FRA": "FR",
-    "GAB": "GA", "GAM": "GM", "GEO": "GE", "GER": "DE", "GHA": "GH",
-    "GRE": "GR", "GRN": "GD", "GUA": "GT", "GUI": "GN", "GBS": "GW",
-    "GUY": "GY", "HAI": "HT", "HON": "HN", "HUN": "HU", "ISL": "IS",
-    "IND": "IN", "INA": "ID", "IRI": "IR", "IRQ": "IQ", "IRL": "IE",
-    "ISR": "IL", "ITA": "IT", "JAM": "JM", "JPN": "JP", "JOR": "JO",
-    "KAZ": "KZ", "KEN": "KE", "KIR": "KI", "PRK": "KP", "KOR": "KR",
-    "KUW": "KW", "KGZ": "KG", "LAO": "LA", "LAT": "LV", "LIB": "LB",
-    "LES": "LS", "LBR": "LR", "LBA": "LY", "LIE": "LI", "LTU": "LT",
-    "LUX": "LU", "MAD": "MG", "MAW": "MW", "MAS": "MY", "MDV": "MV",
-    "MLI": "ML", "MLT": "MT", "MHL": "MH", "MTN": "MR", "MRI": "MU",
-    "MEX": "MX", "FSM": "FM", "MDA": "MD", "MON": "MC", "MGL": "MN",
-    "MNE": "ME", "MAR": "MA", "MOZ": "MZ", "MYA": "MM", "NAM": "NA",
-    "NRU": "NR", "NEP": "NP", "NED": "NL", "NZL": "NZ", "NCA": "NI",
-    "NIG": "NE", "NGR": "NG", "MKD": "MK", "NOR": "NO", "OMA": "OM",
-    "PAK": "PK", "PLW": "PW", "PAN": "PA", "PNG": "PG", "PAR": "PY",
-    "PER": "PE", "PHI": "PH", "POL": "PL", "POR": "PT", "QAT": "QA",
-    "ROU": "RO", "RUS": "RU", "RWA": "RW", "SAM": "WS", "SMR": "SM",
-    "STP": "ST", "KSA": "SA", "SEN": "SN", "SRB": "RS", "SEY": "SC",
-    "SLE": "SL", "SGP": "SG", "SVK": "SK", "SLO": "SI", "SOL": "SB",
-    "SOM": "SO", "RSA": "ZA", "ESP": "ES", "SRI": "LK", "SUD": "SD",
-    "SUR": "SR", "SWE": "SE", "SUI": "CH", "SYR": "SY", "TPE": "TW",
-    "TJK": "TJ", "TAN": "TZ", "THA": "TH", "TLS": "TL", "TOG": "TG",
-    "TGA": "TO", "TTO": "TT", "TUN": "TN", "TUR": "TR", "TKM": "TM",
-    "TUV": "TV", "UGA": "UG", "UKR": "UA", "UAE": "AE", "GBR": "GB",
-    "USA": "US", "URU": "UY", "UZB": "UZ", "VAN": "VU", "VEN": "VE",
-    "VIE": "VN", "YEM": "YE", "ZAM": "ZM", "ZIM": "ZW",
-}
+# The country-name -> alpha-2 lookup (old ``_COUNTRY_DISPLAY_TO_ALPHA2``)
+# and the IOC 3-letter -> alpha-2 table (old ``_IOC_TO_ALPHA2``) are
+# now sourced from ``app.refdata.iso3166`` so the resolver, the
+# Wikipedia parser, and the location_resolver share one source of
+# truth. The inline copies above were removed in favour of:
+#   * resolve_alpha2(name)  — for "France" / "u.s." / "Hong Kong" style
+#   * IOC_TO_ALPHA2[ioc3]   — for "FRA" / "MOZ" style flag templates
 
 
 # -----------------------------------------------------------------------------
