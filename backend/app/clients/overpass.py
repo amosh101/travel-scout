@@ -70,16 +70,14 @@ class OverpassClient(BaseClient):
                 last_err = e
         raise last_err or RuntimeError("all Overpass mirrors failed")
 
-    async def search_hotels_in_bbox(
-        self, south: float, west: float, north: float, east: float, limit: int = 20,
-    ) -> list[POI]:
-        """Find hotels (`tourism=hotel`) within a bounding box."""
-        q = (
-            f"[out:json][timeout:20];"
-            f"node[\"tourism\"=\"hotel\"]({south},{west},{north},{east});"
-            f"out {limit};"
-        )
-        data = await self._post(q)
+    @staticmethod
+    def _parse_pois(data: dict, *, category: str) -> list[POI]:
+        """Convert Overpass response elements into ``POI`` records.
+
+        Honest about data: if a node has no ``name`` tag, we still keep
+        the record but mark it as ``(unnamed)`` — the frontend can then
+        decide whether to show or hide it. We never fabricate a name.
+        """
         pois: list[POI] = []
         for el in data.get("elements", []):
             tags = el.get("tags", {})
@@ -91,12 +89,69 @@ class OverpassClient(BaseClient):
                     name=name,
                     lat=float(el.get("lat", 0.0)),
                     lon=float(el.get("lon", 0.0)),
-                    category="hotel",
+                    category=category,
                     tags=tags,
                 )
             )
+        return pois
+
+    async def _search_in_bbox(
+        self,
+        tourism_kind: str,
+        south: float, west: float, north: float, east: float,
+        limit: int,
+    ) -> list[POI]:
+        q = (
+            f"[out:json][timeout:20];"
+            f"node[\"tourism\"=\"{tourism_kind}\"]({south},{west},{north},{east});"
+            f"out {limit};"
+        )
+        data = await self._post(q)
+        pois = self._parse_pois(data, category=tourism_kind)
         logger.info(
-            "Overpass search_hotels_in_bbox found %d hotels", len(pois),
+            "Overpass _search_in_bbox(%s) found %d", tourism_kind, len(pois),
+        )
+        return pois
+
+    async def search_hotels_in_bbox(
+        self, south: float, west: float, north: float, east: float, limit: int = 20,
+    ) -> list[POI]:
+        """Find hotels (`tourism=hotel`) within a bounding box."""
+        return await self._search_in_bbox(
+            "hotel", south, west, north, east, limit,
+        )
+
+    async def search_hotels_near(
+        self, lat: float, lon: float, radius_km: float = 5.0, limit: int = 20,
+    ) -> list[POI]:
+        """Find hotels (`tourism=hotel`) within ``radius_km`` of a point.
+
+        Uses Overpass ``around:`` filter for a true radial search — better
+        than a bbox when the centre is a downtown coordinate (Bangkok,
+        Madrid, etc.) because the bbox corners would pull in hotels
+        outside the city's actual walkable footprint.
+
+        Returns ``[]`` on Overpass error/timeout (the caller will surface
+        an empty hotels list to the user rather than a fake number).
+        """
+        radius_m = int(radius_km * 1000)
+        q = (
+            f"[out:json][timeout:20];"
+            f"node[\"tourism\"=\"hotel\"](around:{radius_m},{lat},{lon});"
+            f"out {limit};"
+        )
+        try:
+            data = await self._post(q)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Overpass search_hotels_near failed (%s, %s, %skm): %s",
+                lat, lon, radius_km, e,
+            )
+            return []
+        pois = self._parse_pois(data, category="hotel")
+        logger.info(
+            "Overpass search_hotels_near(%s, %s, %skm) found %d hotels",
+            lat, lon, radius_km, len(pois),
         )
         return pois
 
@@ -104,31 +159,9 @@ class OverpassClient(BaseClient):
         self, south: float, west: float, north: float, east: float, limit: int = 30,
     ) -> list[POI]:
         """Find tourist attractions (`tourism=attraction`) within bbox."""
-        q = (
-            f"[out:json][timeout:20];"
-            f"node[\"tourism\"=\"attraction\"]({south},{west},{north},{east});"
-            f"out {limit};"
+        return await self._search_in_bbox(
+            "attraction", south, west, north, east, limit,
         )
-        data = await self._post(q)
-        pois: list[POI] = []
-        for el in data.get("elements", []):
-            tags = el.get("tags", {})
-            name = tags.get("name") or tags.get("name:en") or "(unnamed)"
-            pois.append(
-                POI(
-                    osm_id=int(el.get("id", 0)),
-                    osm_type=el.get("type", "node"),
-                    name=name,
-                    lat=float(el.get("lat", 0.0)),
-                    lon=float(el.get("lon", 0.0)),
-                    category="attraction",
-                    tags=tags,
-                )
-            )
-        logger.info(
-            "Overpass search_attractions_in_bbox found %d attractions", len(pois),
-        )
-        return pois
 
 
 def build_overpass_client() -> OverpassClient:

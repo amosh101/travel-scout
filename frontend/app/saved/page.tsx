@@ -55,7 +55,17 @@ type Itinerary = {
   suggested_events?: Holiday[];   // T8d
   event_window?: EventWindow | null;  // T8a
   flights?: any[];
-  hotels?: { name: string; lat: number; lon: number }[];
+  hotels?: {
+    osm_id?: number;
+    name: string;
+    lat: number;
+    lon: number;
+    stars?: string | null;
+    rooms?: string | null;
+    addr?: string | null;
+    phone?: string | null;
+    website?: string | null;
+  }[];
   route?: { distance_km: number } | null;
   pitch?: string[];
   score?: number;
@@ -461,6 +471,54 @@ export default function SavedPage() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {it.hotels && it.hotels.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-semibold text-emerald-300">
+                      Hotels near {it.destination_name ?? it.destination_iata ?? "your destination"}
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                        · OpenStreetMap
+                      </span>
+                    </h3>
+                    <ul className="mt-1 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                      {it.hotels.slice(0, 8).map((h, i) => (
+                        <li
+                          key={h.osm_id ?? i}
+                          className="rounded-md border border-border/40 p-2"
+                        >
+                          <p className="font-medium">{h.name ?? "(unnamed)"}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {h.stars && <>★ {h.stars} · </>}
+                            {h.rooms && <>{h.rooms} rooms · </>}
+                            {h.addr && <>{h.addr} · </>}
+                            {h.lat?.toFixed(3)}, {h.lon?.toFixed(3)}
+                          </p>
+                          {h.website && (
+                            <a
+                              href={h.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 inline-block text-xs text-emerald-300 underline hover:text-emerald-200"
+                            >
+                              Website ↗
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Real OSM data — verify before booking. Cross-check on
+                      <a
+                        href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(it.destination_name ?? "")}+hotel`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-1 underline hover:text-emerald-200"
+                      >
+                        OpenStreetMap ↗
+                      </a>
+                    </p>
                   </div>
                 )}
 

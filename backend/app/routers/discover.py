@@ -26,6 +26,7 @@ from app.clients import (
     build_jolpica_client,
     build_nominatim_client,
     build_osrm_client,
+    build_overpass_client,
 )
 from app.database import get_session
 from app.refdata.service import ReferenceService
@@ -276,6 +277,7 @@ async def discover(
     osrm = build_osrm_client()
     jolpica = build_jolpica_client()
     holidays_client = build_holidays_client()
+    overpass = build_overpass_client()
     itineraries: list[Itinerary] = []
 
     # Pre-fetch the season once (saves 1s per candidate × N candidates)
@@ -352,6 +354,45 @@ async def discover(
             except Exception as e:  # noqa: BLE001
                 logger.warning("Holidays fetch failed: %s", e)
 
+        # Hotels via OpenStreetMap Overpass. Free, no key, real data.
+        # 5km radius for downtown, expand to 10km if <3 found.
+        hotels: list[dict] = []
+        if overpass is not None and d.lat and d.lon:
+            try:
+                hotel_pois = await overpass.search_hotels_near(
+                    d.lat, d.lon, radius_km=5.0, limit=15,
+                )
+                if len(hotel_pois) < 3:
+                    wider = await overpass.search_hotels_near(
+                        d.lat, d.lon, radius_km=10.0, limit=20,
+                    )
+                    seen_ids = {h.osm_id for h in hotel_pois}
+                    hotel_pois.extend(h for h in wider if h.osm_id not in seen_ids)
+                hotels = [
+                    {
+                        "osm_id": p.osm_id,
+                        "name": p.name,
+                        "lat": p.lat,
+                        "lon": p.lon,
+                        "stars": p.tags.get("stars") or p.tags.get("stars:official"),
+                        "rooms": p.tags.get("rooms") or p.tags.get("capacity"),
+                        "addr": p.tags.get("addr:full") or (
+                            ", ".join(filter(None, [
+                                p.tags.get("addr:street"),
+                                p.tags.get("addr:housenumber"),
+                            ])) or None
+                        ),
+                        "phone": p.tags.get("phone") or p.tags.get("contact:phone"),
+                        "website": p.tags.get("website") or p.tags.get("contact:website"),
+                    }
+                    for p in hotel_pois
+                ]
+                if hotels and "overpass" not in sources_used:
+                    sources_used.append("overpass")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Overpass hotel search failed: %s", e)
+                hotels = []
+
         # Score (audit-only reasons). The user-facing pitch is built in
         # the dedicated ``_build_pitch`` helper.
         duration = (date_to - date_from).days + 1
@@ -384,7 +425,7 @@ async def discover(
             total_distance_km=route.distance_m / 1000 if route else 0.0,
             races_in_window=races_at_destination,
             holiday_alerts=holiday_alerts,
-            hotels=[],
+            hotels=hotels,
             route={
                 "distance_km": route.distance_m / 1000,
                 "duration_h": route.duration_s / 3600,

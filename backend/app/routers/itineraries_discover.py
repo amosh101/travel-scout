@@ -30,6 +30,7 @@ from app.clients import (
     build_jolpica_client,
     build_nominatim_client,
     build_osrm_client,
+    build_overpass_client,
 )
 from app.database import get_session
 from app.models import (
@@ -168,6 +169,7 @@ async def _build_itinerary_for(
     holidays_client,
     osrm,
     nomi,
+    overpass,
     sources_used: list[str],
 ) -> tuple[Itinerary | None, dict | None]:
     """Run the full intersection for one destination.
@@ -452,6 +454,52 @@ async def _build_itinerary_for(
         if per_interest and "free_events" not in sources_used:
             sources_used.append("free_events")
 
+    # Hotels via OpenStreetMap Overpass. Real data, no key, free.
+    # 5km radius is the right downtown scale for most cities; expand
+    # to 10km if the first sweep returns <3 results (suburban/rural
+    # destinations where 5km is too tight). Failures return [] and
+    # the result simply omits the section — never fabricated.
+    hotels: list[dict] = []
+    if d_lat and d_lon and overpass is not None:
+        try:
+            hotel_pois = await overpass.search_hotels_near(
+                d_lat, d_lon, radius_km=5.0, limit=15,
+            )
+            if len(hotel_pois) < 3:
+                # Retry wider for destinations with sparse 5km coverage.
+                wider = await overpass.search_hotels_near(
+                    d_lat, d_lon, radius_km=10.0, limit=20,
+                )
+                # Merge, dedupe by osm_id, prefer the closer result.
+                seen_ids = {h.osm_id for h in hotel_pois}
+                hotel_pois.extend(h for h in wider if h.osm_id not in seen_ids)
+            hotels = [
+                {
+                    "osm_id": p.osm_id,
+                    "name": p.name,
+                    "lat": p.lat,
+                    "lon": p.lon,
+                    "stars": p.tags.get("stars") or p.tags.get("stars:official"),
+                    "rooms": p.tags.get("rooms") or p.tags.get("capacity"),
+                    "addr": p.tags.get("addr:full") or (
+                        ", ".join(filter(None, [
+                            p.tags.get("addr:street"),
+                            p.tags.get("addr:housenumber"),
+                        ])) or None
+                    ),
+                    "phone": p.tags.get("phone") or p.tags.get("contact:phone"),
+                    "website": p.tags.get("website") or p.tags.get("contact:website"),
+                    "wikidata": p.tags.get("wikidata"),
+                    "wikipedia": p.tags.get("wikipedia"),
+                }
+                for p in hotel_pois
+            ]
+            if hotels and "overpass" not in sources_used:
+                sources_used.append("overpass")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Overpass hotel search failed: %s", e)
+            hotels = []
+
     # Score (audit-only reasons) + user-facing pitch.
     score, audit_reasons = _score_itinerary(
         distance_km=(route.distance_m / 1000) if route else 0.0,
@@ -488,7 +536,7 @@ async def _build_itinerary_for(
         total_distance_km=(route.distance_m / 1000) if route else 0.0,
         races_in_window=races_at,
         holiday_alerts=holiday_alerts,
-        hotels=[],
+        hotels=hotels,
         route={
             "distance_km": route.distance_m / 1000,
             # T8b: drive-time removed from results. We keep distance for
@@ -647,6 +695,7 @@ async def discover(
     osrm = build_osrm_client()
     jolpica = build_jolpica_client()
     holidays_client = build_holidays_client()
+    overpass = build_overpass_client()
     try:
         season_races = await jolpica.fetch_season(date_from.year)
     except Exception:
@@ -692,6 +741,7 @@ async def discover(
                 holidays_client=holidays_client,
                 osrm=osrm,
                 nomi=nomi,
+                overpass=overpass,
                 sources_used=sources_used,
             )
         except Exception as e:  # noqa: BLE001
