@@ -3,11 +3,16 @@
 Public API, no key needed. https://wiki.openstreetmap.org/wiki/Overpass_API
 We use it for hotel/restaurant/attraction search as POI, in lieu of a paid
 hotel API. POST requests (ToS); the `data` field is the Overpass-QL query.
+
+Latency: per-mirror HTTP timeout is 6s, fail-fast across 3 mirrors.
+In-process cache (24h TTL) so repeated searches against the same city
+don't hammer the mirrors. OSM POI data changes on the order of days.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -22,11 +27,17 @@ _OVERPASS_MIRRORS = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.ru/api/interpreter",
 ]
-_HTTP_TIMEOUT = 30.0
+_HTTP_TIMEOUT = 4.0  # per-mirror; bounded so user latency stays sane
 _lock = asyncio.Lock()
-# Be a good citizen: 2 req/sec across all mirrors.
-_RATE_LIMIT_S = 0.6
+# Be a good citizen: 1 req/sec across all mirrors.
+_RATE_LIMIT_S = 1.0
 _last_call = 0.0
+
+# In-process cache for Overpass responses. Key is the query string;
+# value is the raw JSON the API returned. 24h TTL — OSM POI data
+# changes on the order of days, not seconds.
+_OVERPASS_CACHE: dict[tuple, tuple[float, dict]] = {}
+_OVERPASS_TTL_S = 24 * 3600
 
 
 @dataclass
@@ -47,6 +58,15 @@ class OverpassClient(BaseClient):
         return True
 
     async def _post(self, query: str) -> dict:
+        # Best-effort cache by query string. Identical queries (same
+        # downtown coord, same radius) return the same JSON for 24h.
+        cache_key = ("query", query)
+        now = time.time()
+        cached = _OVERPASS_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _OVERPASS_TTL_S:
+            logger.info("Overpass cache hit (query len=%d)", len(query))
+            return cached[1]
+
         global _last_call
         async with _lock:
             now = asyncio.get_event_loop().time()
@@ -54,8 +74,10 @@ class OverpassClient(BaseClient):
             if wait > 0:
                 await asyncio.sleep(wait)
             _last_call = asyncio.get_event_loop().time()
-        last_err: Exception | None = None
-        for mirror in _OVERPASS_MIRRORS:
+        # Try all mirrors in parallel — the first one to return wins.
+        # Bound total wait to ~_HTTP_TIMEOUT instead of N × _HTTP_TIMEOUT.
+        import asyncio as _aio
+        async def _try(mirror: str) -> dict | None:
             try:
                 async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                     r = await client.post(
@@ -67,8 +89,25 @@ class OverpassClient(BaseClient):
                     return r.json()
             except httpx.HTTPError as e:
                 logger.warning("Overpass mirror %s failed: %s", mirror, e)
-                last_err = e
-        raise last_err or RuntimeError("all Overpass mirrors failed")
+                return None
+        tasks = [_aio.create_task(_try(m)) for m in _OVERPASS_MIRRORS]
+        try:
+            done, pending = await _aio.wait(
+                tasks, return_when=_aio.FIRST_COMPLETED, timeout=_HTTP_TIMEOUT,
+            )
+            for t in done:
+                if t.exception() is None and t.result() is not None:
+                    data = t.result()
+                    _OVERPASS_CACHE[cache_key] = (time.time(), data)
+                    # Cancel remaining mirrors — we have our answer.
+                    for p in pending:
+                        p.cancel()
+                    return data
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+        raise RuntimeError("all Overpass mirrors failed or timed out")
 
     @staticmethod
     def _parse_pois(data: dict, *, category: str) -> list[POI]:

@@ -355,19 +355,15 @@ async def discover(
                 logger.warning("Holidays fetch failed: %s", e)
 
         # Hotels via OpenStreetMap Overpass. Free, no key, real data.
-        # 5km radius for downtown, expand to 10km if <3 found.
+        # 5km radius for downtown. Failures return [] and the result
+        # simply omits the section — never fabricated. No 10km fallback
+        # (was 2x the latency for marginal gain).
         hotels: list[dict] = []
         if overpass is not None and d.lat and d.lon:
             try:
                 hotel_pois = await overpass.search_hotels_near(
                     d.lat, d.lon, radius_km=5.0, limit=15,
                 )
-                if len(hotel_pois) < 3:
-                    wider = await overpass.search_hotels_near(
-                        d.lat, d.lon, radius_km=10.0, limit=20,
-                    )
-                    seen_ids = {h.osm_id for h in hotel_pois}
-                    hotel_pois.extend(h for h in wider if h.osm_id not in seen_ids)
                 hotels = [
                     {
                         "osm_id": p.osm_id,

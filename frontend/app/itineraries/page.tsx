@@ -244,16 +244,28 @@ export default function ItinerariesPage() {
       </header>
 
       {loading && (
-        <div className="space-y-4">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="rounded-xl border border-border bg-card p-6"
-            >
-              <div className="h-5 w-1/3 animate-pulse rounded bg-muted" />
-              <div className="mt-3 h-3 w-2/3 animate-pulse rounded bg-muted/70" />
-            </div>
-          ))}
+        <div className="space-y-4" role="status" aria-live="polite">
+          <div className="rounded-lg border border-border/40 bg-card/30 p-4">
+            <p className="text-sm text-muted-foreground">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400" />
+              {" "}Finding the best options for you…
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              Pulling real-time events, holidays, and hotels from public
+              sources. Usually under 2 seconds.
+            </p>
+          </div>
+          <ul className="space-y-4">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="rounded-xl border border-border bg-card p-6"
+              >
+                <div className="h-5 w-1/3 animate-pulse rounded bg-muted" />
+                <div className="mt-3 h-3 w-2/3 animate-pulse rounded bg-muted/70" />
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

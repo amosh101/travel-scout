@@ -454,25 +454,18 @@ async def _build_itinerary_for(
         if per_interest and "free_events" not in sources_used:
             sources_used.append("free_events")
 
-    # Hotels via OpenStreetMap Overpass. Real data, no key, free.
-    # 5km radius is the right downtown scale for most cities; expand
-    # to 10km if the first sweep returns <3 results (suburban/rural
-    # destinations where 5km is too tight). Failures return [] and
-    # the result simply omits the section — never fabricated.
+    # Hotels via OpenStreetMap Overpass. Free, no key, real data.
+    # 5km radius for downtown. Failures return [] and the result
+    # simply omits the section — never fabricated. We do NOT retry
+    # at a wider radius (was causing 2x the latency); 5km is the
+    # right scale for downtown and the OSM coverage in 10km of
+    # the same point is almost always the same set of hotels.
     hotels: list[dict] = []
     if d_lat and d_lon and overpass is not None:
         try:
             hotel_pois = await overpass.search_hotels_near(
                 d_lat, d_lon, radius_km=5.0, limit=15,
             )
-            if len(hotel_pois) < 3:
-                # Retry wider for destinations with sparse 5km coverage.
-                wider = await overpass.search_hotels_near(
-                    d_lat, d_lon, radius_km=10.0, limit=20,
-                )
-                # Merge, dedupe by osm_id, prefer the closer result.
-                seen_ids = {h.osm_id for h in hotel_pois}
-                hotel_pois.extend(h for h in wider if h.osm_id not in seen_ids)
             hotels = [
                 {
                     "osm_id": p.osm_id,
