@@ -157,6 +157,34 @@ async def get_current_user_id(
     return user.id
 
 
+async def get_optional_user(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> User | None:
+    """Resolve the current user from a Bearer token, or return ``None``.
+
+    Same as ``get_current_user`` but never raises — used for endpoints
+    that are useful both signed-in and anonymous (e.g. previewing
+    itineraries before signup). Callers should branch on the result
+    rather than relying on a 401 to gate access.
+    """
+    if not authorization:
+        return None
+    token = _bearer(authorization)
+    try:
+        claims = decode_access_token(token)
+    except ValueError:
+        return None
+    sub = claims.get("sub")
+    if not sub:
+        return None
+    stmt = select(User).where(User.email == sub)
+    user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
 # -----------------------------------------------------------------------------
 # Internal: write user interests from an intake payload
 # -----------------------------------------------------------------------------

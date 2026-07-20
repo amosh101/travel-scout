@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, ApiError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth-context";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const sp = useSearchParams();
   const { setToken } = useAuth();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -28,7 +29,12 @@ export default function RegisterPage() {
         body: { email, password, name },
       });
       setToken(res.access_token);
-      router.push("/saved");
+      // Honour ?next= so the user lands back where they were. Only
+      // accept same-origin paths to prevent open-redirect abuse.
+      const next = sp?.get("next");
+      const safeNext =
+        next && next.startsWith("/") && !next.startsWith("//") ? next : "/saved";
+      router.push(safeNext);
     } catch (e) {
       const msg =
         e instanceof ApiError
@@ -111,5 +117,16 @@ export default function RegisterPage() {
         .
       </p>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  // useSearchParams() must be inside a Suspense boundary (Next.js 15
+  // requirement) — wrapping the form lets the static shell render
+  // while the params resolve.
+  return (
+    <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
+      <RegisterForm />
+    </Suspense>
   );
 }

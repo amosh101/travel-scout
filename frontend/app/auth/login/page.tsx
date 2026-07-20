@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, ApiError } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth-context";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const sp = useSearchParams();
   const { setToken } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,7 +28,13 @@ export default function LoginPage() {
         body: { email, password },
       });
       setToken(res.access_token);
-      router.push("/saved");
+      // Honour ?next= so the user lands back where they were (e.g. on
+      // the itineraries page they were previewing before signup). Only
+      // accept same-origin paths to prevent open-redirect abuse.
+      const next = sp?.get("next");
+      const safeNext =
+        next && next.startsWith("/") && !next.startsWith("//") ? next : "/saved";
+      router.push(safeNext);
     } catch (e) {
       const msg =
         e instanceof ApiError && e.status === 401
@@ -93,5 +100,16 @@ export default function LoginPage() {
         .
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams() must be inside a Suspense boundary (Next.js 15
+  // requirement) — wrapping the form lets the static shell render
+  // while the params resolve.
+  return (
+    <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }

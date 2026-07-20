@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
 
@@ -72,6 +73,7 @@ type DiscoverResponse = {
 
 export default function ItinerariesPage() {
   const router = useRouter();
+  const sp = useSearchParams();
   const { token, ready, setToken } = useAuth();
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,24 +82,35 @@ export default function ItinerariesPage() {
   const [saved, setSaved] = useState<Record<number, string>>({});
 
   useEffect(() => {
+    // Do NOT gate on token. The user wants to see the results first,
+    // then get the "sign up to save" / "log in" prompt at the bottom.
+    // If ?destination= is in the URL, use it (anonymous preview path);
+    // otherwise the backend falls back to the user's stored profile.
     if (!ready) return;
-    if (!token) {
-      router.push("/auth/login");
-      return;
-    }
     let cancelled = false;
     async function load() {
       setLoading(true);
       setErr(null);
       try {
+        const urlDestination = sp?.get("destination") ?? null;
+        const urlDateFrom = sp?.get("date_from") ?? null;
+        const urlDateTo = sp?.get("date_to") ?? null;
+        const params = new URLSearchParams();
+        if (urlDestination) params.set("destination", urlDestination);
+        if (urlDateFrom) params.set("date_from", urlDateFrom);
+        if (urlDateTo) params.set("date_to", urlDateTo);
+        const qs = params.toString();
         const res = await apiFetch<DiscoverResponse>(
-          "/api/itineraries/discover",
+          `/api/itineraries/discover${qs ? `?${qs}` : ""}`,
         );
         if (!cancelled) setData(res);
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           setToken(null);
-          router.push("/auth/login");
+          // Should not happen any more (backend uses optional user),
+          // but if the backend ever flips back to required-auth, at
+          // least don't loop the user into a redirect.
+          setErr("Please sign in to see your personalised itineraries.");
           return;
         }
         if (e instanceof ApiError && e.status === 409) {
@@ -117,11 +130,14 @@ export default function ItinerariesPage() {
     return () => {
       cancelled = true;
     };
-  }, [ready, token, router, setToken]);
+  }, [ready, token, sp, setToken]);
 
   async function saveResult(r: Result) {
     if (!token) {
-      router.push("/auth/login");
+      // Anonymous: the results are already visible; tell the user
+      // that saving requires a free account. Don't redirect — they
+      // were just told to look at the results first.
+      router.push(`/auth/login?next=/itineraries?destination=${encodeURIComponent(data?.anchors.destination_override ?? r.destination)}`);
       return;
     }
     setSavingRank(r.rank);
@@ -372,6 +388,37 @@ export default function ItinerariesPage() {
             );
           })}
         </ul>
+      )}
+
+      {/* Sign-up / log-in prompt — shown after results load, only when
+          the user is unauthenticated. We don't redirect on load; we
+          invite them to act AFTER they've seen what we'd find for them. */}
+      {data && data.results.length > 0 && !loading && !token && (
+        <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+          <h2 className="text-lg font-semibold text-amber-300">
+            We found the best options for you
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            These {data.results.length} itinerar{data.results.length === 1 ? "y is" : "ies are"} ready
+            to save. Sign up to keep them across devices and unlock
+            personalised matches based on your interests, or log in if
+            you already have an account.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href={`/auth/register?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background"
+            >
+              Sign up — it's free
+            </Link>
+            <Link
+              href={`/auth/login?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
+            >
+              Log in
+            </Link>
+          </div>
+        </div>
       )}
     </main>
   );

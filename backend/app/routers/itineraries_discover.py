@@ -40,7 +40,7 @@ from app.models import (
     User,
     UserInterest,
 )
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_user, get_optional_user
 from app.routers.search import Itinerary, _build_pitch, _score_itinerary
 from app.routers.discover import (
     _COUNTRY_NAME_TO_CODE,
@@ -566,7 +566,7 @@ async def _build_itinerary_only(
 
 @router.get("/discover")
 async def discover(
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User | None, Depends(get_optional_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     origin: str | None = Query(None, description="Override the user's origin"),
     destination: str | None = Query(None, description="Override candidate destinations"),
@@ -574,17 +574,38 @@ async def discover(
     date_to: date | None = Query(None),
     top_n: int = Query(5, ge=1, le=20),
 ) -> dict[str, Any]:
-    """Ranked itineraries for the authenticated user.
+    """Ranked itineraries.
 
-    1. Load the user's stored interests.
-    2. If ``destination`` is given, score only that one. Otherwise
-       enumerate candidate destinations from the stored destinations
-       (if any) plus the season's F1 cities (so F1 trips are found
-       even without an explicit destination).
-    3. For each candidate, run the full intersection (Nominatim +
-       OSRM + Jolpica + Nager.Date + Overpass).
-    4. Return ranked results.
+    Works for both authenticated and anonymous users:
+
+    - **Signed in:** uses the user's stored interests, intake window,
+      and origins. The original behaviour.
+    - **Anonymous:** requires ``?destination=City&date_from=...&date_to=...``
+      in the URL — no profile to fall back to. Used for the "preview
+      before signup" flow on the itineraries page.
+
+    Both branches return the same shape so the frontend renders results
+    identically; only the save buttons differ (auth required for save).
     """
+    if user is not None:
+        return await _discover_for_user(
+            session, user, origin, destination, date_from, date_to, top_n,
+        )
+    return await _discover_anonymous(
+        session, origin, destination, date_from, date_to, top_n,
+    )
+
+
+async def _discover_for_user(
+    session: AsyncSession,
+    user: User,
+    origin: str | None,
+    destination: str | None,
+    date_from: date | None,
+    date_to: date | None,
+    top_n: int,
+) -> dict[str, Any]:
+    """Original authenticated flow — uses the user's stored profile."""
     interests = await _load_user_interests(session, user.id)
     if not interests:
         raise HTTPException(
@@ -833,6 +854,160 @@ async def discover(
         "results": enriched_results,
         "sources_used": sorted(set(sources_used)),
         "flight_status": "kiwi_not_configured",  # honest disclosure
+    }
+
+
+async def _discover_anonymous(
+    session: AsyncSession,
+    origin: str | None,
+    destination: str | None,
+    date_from: date | None,
+    date_to: date | None,
+    top_n: int,
+) -> dict[str, Any]:
+    """Anonymous preview — single-destination, no stored profile.
+
+    Used for the "show me what you'd find, then ask me to sign up" flow.
+    Requires ``destination`` in the URL. Uses the destination as its own
+    origin (no route to compute from an unspecified start city).
+    """
+    if not destination:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="anonymous discover requires ?destination=City",
+        )
+    today = date.today()
+    if date_from is None:
+        date_from = today
+    if date_to is None:
+        # Sensible default for anonymous preview: next 6 months
+        # (same as the legacy /api/discover fallback).
+        date_to = today + timedelta(days=180)
+    if date_to < date_from:
+        raise HTTPException(400, "date_to must be >= date_from")
+
+    # Origin defaults to the destination itself — no stored origin to pull.
+    effective_origin = (origin or destination).strip()
+    active_window = {
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "when": None,
+        "when_label": "next 6 months (preview)",
+    }
+
+    candidates: list[tuple[str, str | None]] = [(destination.strip(), None)]
+
+    nomi = build_nominatim_client()
+    osrm = build_osrm_client()
+    jolpica = build_jolpica_client()
+    holidays_client = build_holidays_client()
+    overpass = build_overpass_client()
+    try:
+        season_races = await jolpica.fetch_season(date_from.year)
+    except Exception:
+        season_races = []
+
+    # Resolve origin via ReferenceService.
+    from app.refdata.service import ReferenceService
+    ref = ReferenceService(session)
+    origin_res = await ref.resolve(effective_origin)
+    origin_res_d = origin_res.to_dict()
+    origin_geo_obj = None
+    sources_used: list[str] = []
+    if origin_res_d["matched"] and origin_res_d["city"]:
+        sources_used.append("refdata")
+        class _OriginGeo:
+            lat = origin_res_d["city"]["latitude"]
+            lon = origin_res_d["city"]["longitude"]
+            display_name = f"{origin_res_d['city']['name']}, {origin_res_d['country']['name']}"
+            country_code = origin_res_d["country"]["alpha2"]
+        origin_geo_obj = _OriginGeo()
+    else:
+        try:
+            origin_geo = (await nomi.geocode(effective_origin, limit=1))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Origin geocode failed: %s", e)
+            origin_geo = []
+        origin_geo_obj = origin_geo[0] if origin_geo else None
+
+    built: list[Itinerary] = []
+    event_windows_by_dest: dict[str, dict] = {}
+    # Anonymous: no stored interests, so the intersection runs without
+    # interest weighting. The user can still see all real events, races,
+    # holidays, and hotels in the trip window — they just don't get the
+    # personalised "matches your F1 interest" pitch. That's honest: we
+    # don't have their interests yet.
+    for cand_name, cand_hint in candidates:
+        try:
+            it, ew = await _build_itinerary_for(
+                session,
+                candidate_name=cand_name,
+                candidate_country_hint=cand_hint,
+                origin_geo=origin_geo_obj,
+                origin_resolution=None,
+                date_from=date_from,
+                date_to=date_to,
+                interests=[],  # anonymous: no personalisation
+                season_races=season_races,
+                holidays_client=holidays_client,
+                osrm=osrm,
+                nomi=nomi,
+                overpass=overpass,
+                sources_used=sources_used,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Build itinerary for %s failed: %s", cand_name, e)
+            continue
+        if it is None:
+            continue
+        built.append(it)
+        if ew is not None:
+            event_windows_by_dest[it.destination] = ew
+
+    built.sort(key=lambda i: i.score, reverse=True)
+    built = built[:top_n]
+
+    from dataclasses import asdict
+    from app.refdata.service import ReferenceService as _RS
+    ref_enrich = _RS(session)
+    origin_res_for_iata = await ref_enrich.resolve(effective_origin)
+    origin_res_for_iata_d = origin_res_for_iata.to_dict()
+    origin_iata = (
+        origin_res_for_iata_d["airport"]["iata"]
+        if origin_res_for_iata_d.get("airport")
+        else None
+    )
+
+    enriched_results = []
+    for idx, it in enumerate(built, start=1):
+        it.rank = idx
+        d = asdict(it)
+        d["origin_iata"] = origin_iata
+        dest_res = await ref_enrich.resolve(it.destination)
+        dest_res_d = dest_res.to_dict()
+        d["destination_iata"] = (
+            dest_res_d["airport"]["iata"] if dest_res_d.get("airport") else None
+        )
+        d["destination_country_alpha2"] = dest_res_d["country"]["alpha2"] if dest_res_d.get("country") else None
+        d["destination_city_id"] = dest_res_d["city"]["id"] if dest_res_d.get("city") else None
+        d["event_window"] = event_windows_by_dest.get(it.destination)
+        enriched_results.append(d)
+
+    return {
+        "user": None,  # explicitly anonymous
+        "interests": [],
+        "anchors": {
+            "origin": effective_origin,
+            "origin_iata": origin_iata,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "destination_override": destination,
+        },
+        "active_window": active_window,
+        "results": enriched_results,
+        "sources_used": sorted(set(sources_used)),
+        "flight_status": "kiwi_not_configured",
+        "anonymous": True,  # flag for the frontend
     }
 
 
