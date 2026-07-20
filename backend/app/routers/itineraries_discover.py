@@ -442,14 +442,33 @@ async def _build_itinerary_for(
                 logger.warning("Free event search failed: %s", batch)
                 continue
             for e in batch:
+                # ``e`` is an ``EventRecord`` dataclass (or a dict if
+                # a source returned one — handle both). Use getattr
+                # for the dataclass path, .get() for the dict path.
+                if isinstance(e, dict):
+                    kind = e.get("kind", "event")
+                    title = e.get("name", "Event")
+                    starts_at = e.get("starts_at")
+                    city = e.get("city", "")
+                    country = e.get("country", "")
+                    source = e.get("source", "wikipedia")
+                    source_url = e.get("source_url")
+                else:
+                    kind = getattr(e, "kind", "event") or "event"
+                    title = getattr(e, "name", None) or "Event"
+                    starts_at = getattr(e, "starts_at", None)
+                    city = getattr(e, "city", "") or ""
+                    country = getattr(e, "country", "") or ""
+                    source = getattr(e, "source", "") or "wikipedia"
+                    source_url = getattr(e, "source_url", None)
                 anchor_events.append({
-                    "kind": e.get("kind", "event"),
-                    "title": e.get("name", "Event"),
-                    "date": e.get("starts_at").isoformat() if e.get("starts_at") else None,
-                    "city": e.get("city", ""),
-                    "country": e.get("country", ""),
-                    "source": e.get("source", "wikipedia"),
-                    "source_url": e.get("source_url"),
+                    "kind": kind,
+                    "title": title,
+                    "date": starts_at.isoformat() if starts_at else None,
+                    "city": city,
+                    "country": country,
+                    "source": source,
+                    "source_url": source_url,
                 })
         if per_interest and "free_events" not in sources_used:
             sources_used.append("free_events")
