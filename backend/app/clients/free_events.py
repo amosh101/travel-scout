@@ -210,18 +210,21 @@ class WikidataEventsClient:
             end_iso=end_iso,
             limit=limit,
         )
-        # Use a short timeout (8s) for Wikidata — the SPARQL endpoint is
-        # often slow and we don't want to block the whole search. If it
-        # times out we silently fall through; Wikipedia still answers.
+        # Use a short timeout (4s) for Wikidata — the SPARQL endpoint
+        # is often slow and we don't want to block the whole search.
+        # If it times out we silently fall through; Wikipedia still
+        # answers. The per-interest wait_for() in the router is a
+        # 6s hard cap on top of this, so a query never takes more
+        # than 6s for a single interest.
         try:
             r = requests.get(
                 _WIKIDATA_SPARQL_URL,
-                params={"query": sparql, "format": "json", "timeout": "8"},
+                params={"query": sparql, "format": "json", "timeout": "4"},
                 headers={
                     "User-Agent": _USER_AGENT,
                     "Accept": "application/sparql-results+json",
                 },
-                impersonate="chrome120", timeout=10,
+                impersonate="chrome120", timeout=5,
             )
             r.raise_for_status()
         except Exception as e:  # noqa: BLE001
@@ -1024,7 +1027,6 @@ class FreeEventAggregator:
     def __init__(self) -> None:
         self.wikidata = WikidataEventsClient()
         self.wikipedia = WikipediaListClient()
-
     def is_configured(self) -> bool:
         return True
 
@@ -1068,3 +1070,12 @@ class FreeEventAggregator:
 
 def build_free_event_aggregator() -> FreeEventAggregator:
     return FreeEventAggregator()
+
+
+# In-process cache: (interest, country, city_lower) -> list[EventRecord].
+# Wikidata and Wikipedia rate-limit parallel requests, so we serialize
+# the per-interest queries and cache the result for 24h. Cache is
+# process-local; cleared on container restart.
+_FREE_EVENTS_CACHE: dict[tuple[str, str, str], list[EventRecord]] = {}
+_FREE_EVENTS_CACHE_TTL_S = 24 * 3600
+_FREE_EVENTS_CACHE_LAST_CLEAR = 0.0

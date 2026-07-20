@@ -171,6 +171,7 @@ async def _build_itinerary_for(
     nomi,
     overpass,
     sources_used: list[str],
+    is_anonymous: bool = False,
 ) -> tuple[Itinerary | None, dict | None]:
     """Run the full intersection for one destination.
 
@@ -384,8 +385,19 @@ async def _build_itinerary_for(
     # an F1-related interest, an F1 race at this destination is the
     # anchor.
     f1_kw = {"f1", "f1 / motorsport", "motorsport", "formula 1", "racing"}
-    interests_norm = {i.strip().lower() for i in interests}
+    interests_norm = {i.strip().lower() for i in interests if i}
     is_f1_trip = bool(interests_norm & f1_kw)
+
+    # Default interest set for anonymous / unset interest queries.
+    # The free-events aggregator (Wikidata + Wikipedia) returns good
+    # coverage on these six across most countries. Falls through to
+    # the existing logic so the user's stored interests still win
+    # when they exist.
+    if not interests_norm:
+        interests_norm = {
+            "modern-art", "football", "cycling", "jazz",
+            "opera", "design",
+        }
 
     anchor_events: list[dict] = []
     for race in races_at:
@@ -434,19 +446,43 @@ async def _build_itinerary_for(
     free_agg = build_free_event_aggregator()
     non_anchor_interests = [i for i in interests_norm
                              if i not in f1_kw and i != "public-holidays"]
-    if non_anchor_interests:
+    # Free event sources (Wikidata + Wikipedia) are rate-limited and
+    # only fire when the user has STORED interests. The default set
+    # used for anonymous previews doesn't query the free sources —
+    # they get race + holidays + hotels instead. A user with stored
+    # interests gets their personalised events from the curated
+    # Wikidata/Wikipedia lists on top of the basic result.
+    if non_anchor_interests and not is_anonymous:
+        from app.clients.free_events import _FREE_EVENTS_CACHE
+
+        async def _search_with_cap(interest: str):
+            cache_key = (interest, d_country or "", candidate_name.lower())
+            cached = _FREE_EVENTS_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            try:
+                result = await asyncio.wait_for(
+                    free_agg.search(
+                        interest_key=interest,
+                        country_alpha2=d_country,
+                        start_date=date_from,
+                        end_date=date_to,
+                        city=candidate_name,
+                        limit=5,
+                    ),
+                    timeout=2.5,
+                )
+                _FREE_EVENTS_CACHE[cache_key] = result
+                return result
+            except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+                logger.info("Free events for %s in %s: %s", interest, candidate_name, e)
+                _FREE_EVENTS_CACHE[cache_key] = []
+                return []
+
         try:
-            per_interest = await asyncio.gather(
-                *(free_agg.search(
-                    interest_key=k,
-                    country_alpha2=d_country,
-                    start_date=date_from,
-                    end_date=date_to,
-                    city=candidate_name,
-                    limit=5,
-                ) for k in non_anchor_interests),
-                return_exceptions=True,
-            )
+            per_interest = []
+            for k in non_anchor_interests:
+                per_interest.append(await _search_with_cap(k))
         except Exception as e:  # noqa: BLE001
             logger.warning("Free event aggregator failed: %s", e)
             per_interest = []
@@ -561,6 +597,11 @@ async def _build_itinerary_for(
         total_distance_km=(route.distance_m / 1000) if route else 0.0,
         races_in_window=races_at,
         holiday_alerts=holiday_alerts,
+        # Wikidata + Wikipedia events for the user's interests (or the
+        # default interest set if none were given). Each event is a
+        # dict with kind/title/date/city/country/source/source_url —
+        # the front-end renders them in the "events in this trip" list.
+        interest_events=anchor_events,
         hotels=hotels,
         route={
             "distance_km": route.distance_m / 1000,
@@ -632,11 +673,12 @@ async def _discover_for_user(
 ) -> dict[str, Any]:
     """Original authenticated flow — uses the user's stored profile."""
     interests = await _load_user_interests(session, user.id)
-    if not interests:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="user has no stored interests; cannot run interest-led discover",
-        )
+    # No stored interests is no longer a blocker — the intersection
+    # runs with a default interest set (modern-art, football, cycling,
+    # jazz, opera, design) that gives broad coverage. The user's
+    # profile still drives the date window and origin. We surface
+    # the empty profile in the response so the front-end can offer
+    # to "add interests" without re-running the search.
 
     profile = await _load_user_profile_intake(session, user)
     effective_origin = (origin or (profile or {}).get("origin") or "Maputo").strip()
@@ -979,6 +1021,7 @@ async def _discover_anonymous(
                 nomi=nomi,
                 overpass=overpass,
                 sources_used=sources_used,
+                is_anonymous=True,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Build itinerary for %s failed: %s", cand_name, e)
