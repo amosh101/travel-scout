@@ -21,6 +21,16 @@ type Race = {
 
 type Holiday = { date: string; name: string; local?: string; booking_link?: string };
 
+type InterestEvent = {
+  kind: string;
+  title: string;
+  date?: string | null;
+  city?: string;
+  country?: string;
+  source?: string;
+  source_url?: string;
+};
+
 type Result = {
   rank: number;
   score: number;
@@ -36,6 +46,7 @@ type Result = {
   total_distance_km?: number;
   races_in_window: Race[];
   holiday_alerts: Holiday[];
+  interest_events?: InterestEvent[];
   hotels: { name: string; lat: number; lon: number }[];
   route?: { distance_km: number } | null;
   sources: string[];
@@ -378,6 +389,52 @@ export default function ItinerariesPage() {
                         {h.local ? <>({h.local})</> : null} &middot; {h.date}
                       </li>
                     ))}
+                  </ul>
+                </div>
+              )}
+
+              {r.interest_events && r.interest_events.length > 0 && (
+                <div className="mt-4">
+                  <h3 className="text-sm font-semibold text-emerald-300">
+                    Events matching your interests
+                  </h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Free event data from Wikidata and Wikipedia — verify dates
+                    with the source before booking.
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {r.interest_events
+                      .filter(
+                        (e) =>
+                          e.source !== "jolpica" &&
+                          e.source !== "nager.date"
+                      )
+                      .map((e, i) => (
+                        <li key={i}>
+                          <span className="font-medium">{e.title}</span>
+                          {e.city ? <> &middot; {e.city}</> : null}
+                          {e.date ? <> &middot; {e.date}</> : null}
+                          {e.source ? (
+                            <span className="text-xs text-muted-foreground">
+                              {" "}
+                              ({e.source})
+                            </span>
+                          ) : null}
+                          {e.source_url ? (
+                            <>
+                              {" "}
+                              <a
+                                href={e.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-sky-400 hover:underline"
+                              >
+                                source ↗
+                              </a>
+                            </>
+                          ) : null}
+                        </li>
+                      ))}
                   </ul>
                 </div>
               )}
