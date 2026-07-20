@@ -497,7 +497,6 @@ class WikipediaListClient:
         # ---------------- SPORT ----------------
         "cycling": [
             ("Classic cycle races", "cycling_race"),
-            ("Grand Tour (cycling)", "cycling_race"),
         ],
         "tennis": [
             ("List of tennis tournaments", "tennis_tournament"),
@@ -578,7 +577,7 @@ class WikipediaListClient:
         ],
         # ---------------- FOOD / DRINK ----------------
         "food-wine": [
-            ("Lists of festivals", "festival"),
+            ("List of food festivals", "food_festival"),
         ],
         "wine": [
             ("Wine festival", "wine_festival"),
@@ -615,10 +614,10 @@ class WikipediaListClient:
             ("Kitesurfing", "windsport"),
         ],
         "nightlife": [
-            ("Lists of festivals", "festival"),
+            ("List of music festivals", "music_festival"),
         ],
         "wellness": [
-            ("Lists of festivals", "festival"),
+            ("List of music festivals", "music_festival"),
         ],
         "luxury": [
             ("List of fashion events", "luxury_event"),
@@ -726,19 +725,17 @@ class WikipediaListClient:
         end_date: date | None,
         limit: int,
     ) -> list[EventRecord]:
-        # Country filter is OPTIONAL. Wikipedia rows often lack a
-        # country code (we can't reliably extract it from prose like
-        # "Ann Arbor, Michigan" without a US lookup). The admin / DB
-        # overrides are stricter; the free sources are noisy, so we
-        # keep all rows that *could* match and let the ranker decide.
-        # If the row has no country, we keep it; if it has a country
-        # that doesn't match, we keep it too (so a "jazz" search
-        # doesn't return 0 just because the event was in the US
-        # not Belgium — the user can filter later).
+        # STRICT country match. If a row has no country parsed, we drop
+        # it (rather than keeping it) because the alternative is a Maputo
+        # search returning European cycling races. Wikipedia's wikitext
+        # list articles almost always have a country marker (flag icon,
+        # or "City, Country" in a cell) — if we can't find one, the row
+        # is probably meta (article title, see-also, etc.) not a real
+        # event in a real country.
         if country_alpha2:
             events = [
                 e for e in events
-                if not e.country_alpha2 or e.country_alpha2 == country_alpha2
+                if e.country_alpha2 and e.country_alpha2 == country_alpha2
             ]
         if start_date and end_date:
             events = [
@@ -755,7 +752,19 @@ class WikipediaListClient:
         Wikipedia has a structured "wikitext" API; we hit
         ``action=parse`` and pull the list rows. Each row typically
         contains the event name plus a "Country" or "City" cell.
+
+        Meta-articles like "Lists of festivals" (a list of "list of
+        festivals in X" articles, not actual festivals) are detected
+        by their first-table content and skipped. We detect them by
+        checking if the first non-header row of the table contains
+        "List of " in the first cell — that's the tell that this
+        article is a list of list-articles.
         """
+        # Pre-flight: reject obvious meta-articles up front. The
+        # catalog should never include these but we guard against
+        # any future misconfiguration.
+        if title.lower().startswith("lists of ") or title.lower() == "lists of festivals":
+            return []
         r = requests.get(
             "https://en.wikipedia.org/w/api.php",
             params={
@@ -848,28 +857,62 @@ class WikipediaListClient:
             if name.startswith(("#", ":", "List of ", "Early ")):
                 current_row_cells.clear()
                 return
-            # Heuristic: pick the first cell after the name that contains
-            # a comma (likely "City, State, Country" or "City, Country").
-            location = ""
+            # Skip image-caption rows from infoboxes. These look like
+            # "| caption7 = {{flag|UK}} [[Chris Froome]]" — the first
+            # cell is usually an image filename or a short caption.
+            if any(
+                marker in name.lower()
+                for marker in (".jpg", ".png", ".svg", "image", "caption",
+                               "logo", "map of", "flag of", "coat of arms")
+            ):
+                current_row_cells.clear()
+                return
+            # Try to extract a country from EVERY cell. Real Wikipedia
+            # tables put the country in different columns for different
+            # articles: sometimes the second cell, sometimes a separate
+            # column labelled "Country", sometimes a flag icon template.
+            country_alpha2 = ""
+            country = ""
+            city = ""
             for cell in current_row_cells[1:]:
-                if "," in cell:
-                    location = cell
-                    break
-            if not location:
-                location = current_row_cells[1] if len(current_row_cells) > 1 else ""
-            city = country = ""
-            if location:
-                parts = [p.strip() for p in location.split(",") if p.strip()]
-                if len(parts) >= 2:
-                    country = parts[-1]
-                    city = ", ".join(parts[:-1])
-                else:
-                    city = parts[0]
-            country_alpha2 = _COUNTRY_DISPLAY_TO_ALPHA2.get(country.lower())
+                cell_clean = cell.strip()
+                # Flag icon: {{flag|XX}} or {{icon|country|XX}} or
+                # {{Country flag|XX}}.
+                fm = re.search(
+                    r"\{\{(?:flag|flagicon|country flag)\|([A-Za-z]{2,3})", cell_clean
+                )
+                if fm:
+                    code = fm.group(1).upper()
+                    country_alpha2 = (
+                        code if len(code) == 2
+                        else _IOC_TO_ALPHA2.get(code, "")
+                    )
+                    if country_alpha2:
+                        break
+                # "City, State, Country" or "City, Country".
+                if "," in cell_clean and not country_alpha2:
+                    parts = [p.strip() for p in cell_clean.split(",") if p.strip()]
+                    if len(parts) >= 2:
+                        last = parts[-1]
+                        mapped = _COUNTRY_DISPLAY_TO_ALPHA2.get(last.lower(), "")
+                        if mapped:
+                            country_alpha2 = mapped
+                            country = last
+                            city = ", ".join(parts[:-1])
+                            break
+                # Bare country name in a single cell.
+                if cell_clean and not country_alpha2:
+                    mapped = _COUNTRY_DISPLAY_TO_ALPHA2.get(cell_clean.lower(), "")
+                    if mapped:
+                        country_alpha2 = mapped
+                        country = cell_clean
+                        break
+            # If we still don't have a country, drop the row entirely
+            # — strict filter (see _filter) requires it.
             out.append(EventRecord(
                 name=name,
                 kind=kind,
-                city=city or name,
+                city=city or (current_row_cells[1] if len(current_row_cells) > 1 else name),
                 country=country or "",
                 country_alpha2=country_alpha2 or "",
                 source="wikipedia",
@@ -906,11 +949,30 @@ class WikipediaListClient:
                         continue
                     country = ""
                     city = ""
-                    if "," in name:
-                        parts = name.split(",", 1)
-                        city = parts[0].strip()
-                        country = parts[1].strip()
-                    country_alpha2 = _COUNTRY_DISPLAY_TO_ALPHA2.get(country.lower())
+                    # Wikipedia bullets often carry a country marker
+                    # like {{flag|FRA}} or {{flagicon|France}}. The
+                    # alpha-2 form is the most reliable.
+                    flag_match = re.search(
+                        r"\{\{(?:flag|flagicon)\|([A-Za-z]{2,3})", line
+                    )
+                    if flag_match:
+                        alpha2 = flag_match.group(1).upper()
+                        if len(alpha2) == 2:
+                            country = alpha2
+                        else:
+                            # Three-letter IOC code -> alpha2 via our map.
+                            mapped = _IOC_TO_ALPHA2.get(alpha2, "")
+                            country = mapped
+                    if not country:
+                        # Fall back to "City, Country" inside the link text.
+                        if "," in name:
+                            parts = name.split(",", 1)
+                            city = parts[0].strip()
+                            country = parts[1].strip()
+                    country_alpha2 = (
+                        country if len(country) == 2
+                        else _COUNTRY_DISPLAY_TO_ALPHA2.get(country.lower(), country)
+                    )
                     starts_at = self._extract_month(line)
                     out.append(EventRecord(
                         name=name,
@@ -972,8 +1034,11 @@ _MONTHS = {
 
 
 # Country display name -> alpha-2 (lowercase, the values match the
-# country fields in Wikipedia tables).
+# country fields in Wikipedia tables). Includes every common variant
+# the wikitext parser encounters: abbreviations, demonyms, US/UK
+# sub-nationals mapped to their country, and historical names.
 _COUNTRY_DISPLAY_TO_ALPHA2: dict[str, str] = {
+    # Full names
     "albania": "AL", "algeria": "DZ", "argentina": "AR", "armenia": "AM",
     "australia": "AU", "austria": "AT", "azerbaijan": "AZ", "bahrain": "BH",
     "bangladesh": "BD", "belarus": "BY", "belgium": "BE", "bolivia": "BO",
@@ -991,24 +1056,135 @@ _COUNTRY_DISPLAY_TO_ALPHA2: dict[str, str] = {
     "kazakhstan": "KZ", "kenya": "KE", "kuwait": "KW", "kyrgyzstan": "KG",
     "laos": "LA", "latvia": "LV", "lebanon": "LB", "libya": "LY",
     "liechtenstein": "LI", "lithuania": "LT", "luxembourg": "LU",
-    "macedonia": "MK", "malaysia": "MY", "maldives": "MV", "malta": "MT",
-    "mexico": "MX", "moldova": "MD", "monaco": "MC", "mongolia": "MN",
-    "montenegro": "ME", "morocco": "MA", "mozambique": "MZ",
-    "myanmar": "MM", "nepal": "NP", "netherlands": "NL", "new zealand": "NZ",
-    "nicaragua": "NI", "nigeria": "NG", "norway": "NO", "oman": "OM",
-    "pakistan": "PK", "palestine": "PS", "panama": "PA", "paraguay": "PY",
-    "peru": "PE", "philippines": "PH", "poland": "PL", "portugal": "PT",
-    "qatar": "QA", "romania": "RO", "russia": "RU", "rwanda": "RW",
-    "saudi arabia": "SA", "senegal": "SN", "serbia": "RS", "singapore": "SG",
-    "slovakia": "SK", "slovenia": "SI", "south africa": "ZA",
-    "south korea": "KR", "spain": "ES", "sri lanka": "LK", "sudan": "SD",
-    "sweden": "SE", "switzerland": "CH", "syria": "SY", "taiwan": "TW",
-    "tajikistan": "TJ", "tanzania": "TZ", "thailand": "TH", "tunisia": "TN",
-    "turkey": "TR", "türkiye": "TR", "turkmenistan": "TM", "uganda": "UG",
-    "ukraine": "UA", "united arab emirates": "AE", "united kingdom": "GB",
+    "macedonia": "MK", "north macedonia": "MK", "malaysia": "MY",
+    "maldives": "MV", "malta": "MT", "mexico": "MX", "moldova": "MD",
+    "monaco": "MC", "mongolia": "MN", "montenegro": "ME", "morocco": "MA",
+    "mozambique": "MZ", "myanmar": "MM", "nepal": "NP", "netherlands": "NL",
+    "new zealand": "NZ", "nicaragua": "NI", "nigeria": "NG", "norway": "NO",
+    "oman": "OM", "pakistan": "PK", "palestine": "PS", "panama": "PA",
+    "paraguay": "PY", "peru": "PE", "philippines": "PH", "poland": "PL",
+    "portugal": "PT", "qatar": "QA", "romania": "RO", "russia": "RU",
+    "rwanda": "RW", "saudi arabia": "SA", "senegal": "SN", "serbia": "RS",
+    "singapore": "SG", "slovakia": "SK", "slovenia": "SI",
+    "south africa": "ZA", "south korea": "KR", "korea": "KR",
+    "spain": "ES", "sri lanka": "LK", "sudan": "SD", "sweden": "SE",
+    "switzerland": "CH", "syria": "SY", "taiwan": "TW", "tajikistan": "TJ",
+    "tanzania": "TZ", "thailand": "TH", "tunisia": "TN", "turkey": "TR",
+    "türkiye": "TR", "turkmenistan": "TM", "uganda": "UG", "ukraine": "UA",
+    "united arab emirates": "AE", "united kingdom": "GB",
     "united states": "US", "uruguay": "UY", "uzbekistan": "UZ",
     "venezuela": "VE", "vietnam": "VN", "yemen": "YE", "zambia": "ZM",
     "zimbabwe": "ZW",
+    # Common abbreviations (Wikipedia tables use these)
+    "u.s.": "US", "u.s.a.": "US", "usa": "US", "us": "US",
+    "u.k.": "GB", "uk": "GB", "great britain": "GB", "britain": "GB",
+    "uae": "AE", "u.a.e.": "AE",
+    "nz": "NZ", "aus": "AU", "ger": "DE", "fra": "FR", "ita": "IT",
+    "esp": "ES", "por": "PT", "ned": "NL", "sui": "CH", "den": "DK",
+    "swe": "SE", "nor": "NO", "fin": "FI", "pol": "PL", "cze": "CZ",
+    "hun": "HU", "aut": "AT", "ire": "IE", "sco": "GB", "wal": "GB",
+    "eng": "GB", "arg": "AR", "bra": "BR", "chi": "CL", "mex": "MX",
+    "jpn": "JP", "chn": "CN", "kor": "KR", "ind": "IN", "tha": "TH",
+    "phi": "PH", "sin": "SG", "mas": "MY", "rsa": "ZA", "egy": "EG",
+    "mar": "MA", "nig": "NG", "ken": "KE", "tun": "TN",
+    # UK sub-nationals — Wikipedia tables list "England", "Scotland",
+    # "Wales", "Northern Ireland" as if they were countries. They're
+    # the UK (GB) for the purposes of this filter.
+    "england": "GB", "scotland": "GB", "wales": "GB",
+    "northern ireland": "GB", "cornwall": "GB", "kent": "GB",
+    # US states — Wikipedia tables often list state names instead of
+    # "United States" or "U.S." for the country. Map common ones to US.
+    "alabama": "US", "alaska": "US", "arizona": "US", "arkansas": "US",
+    "california": "US", "colorado": "US", "connecticut": "US",
+    "delaware": "US", "florida": "US", "georgia": "US", "hawaii": "US",
+    "idaho": "US", "illinois": "US", "indiana": "US", "iowa": "US",
+    "kansas": "US", "kentucky": "US", "louisiana": "US", "maine": "US",
+    "maryland": "US", "massachusetts": "US", "michigan": "US",
+    "minnesota": "US", "mississippi": "US", "missouri": "US",
+    "montana": "US", "nebraska": "US", "nevada": "US",
+    "new hampshire": "US", "new jersey": "US", "new mexico": "US",
+    "new york": "US", "north carolina": "US", "north dakota": "US",
+    "ohio": "US", "oklahoma": "US", "oregon": "US", "pennsylvania": "US",
+    "rhode island": "US", "south carolina": "US", "south dakota": "US",
+    "tennessee": "US", "texas": "US", "utah": "US", "vermont": "US",
+    "virginia": "US", "washington": "US", "west virginia": "US",
+    "wisconsin": "US", "wyoming": "US", "u.s": "US",
+    # Canadian provinces
+    "ontario": "CA", "quebec": "CA", "british columbia": "CA",
+    "alberta": "CA", "manitoba": "CA", "saskatchewan": "CA",
+    "nova scotia": "CA", "new brunswick": "CA",
+    # Australian states
+    "victoria": "AU", "queensland": "AU", "new south wales": "AU",
+    "western australia": "AU", "south australia": "AU", "tasmania": "AU",
+    # Chinese provinces / regions
+    "hong kong": "CN", "macau": "CN", "tibet": "CN", "tibetan": "CN",
+    # Indian states
+    "goa": "IN", "kerala": "IN", "tamil nadu": "IN", "karnataka": "IN",
+    "maharashtra": "IN", "rajasthan": "IN", "west bengal": "IN",
+    "andhra pradesh": "IN", "gujarat": "IN", "uttar pradesh": "IN",
+    # German states
+    "bavaria": "DE", "saxony": "DE", "berlin": "DE", "hamburg": "DE",
+    # Italian regions
+    "tuscany": "IT", "lombardy": "IT", "sicily": "IT", "sardinia": "IT",
+    # Spanish communities
+    "catalonia": "ES", "andalusia": "ES", "basque country": "ES",
+    "galicia": "ES", "valencia": "ES", "castile": "ES",
+    # French regions
+    "provence": "FR", "normandy": "FR", "brittany": "FR",
+    # Generic African / Asian / South American regions that show up
+    "east africa": "KE", "west africa": "NG", "north africa": "EG",
+    "south america": "BR", "central america": "MX",
+    "southeast asia": "TH", "east asia": "CN", "south asia": "IN",
+    # Sub-national / city-only entries the parser sometimes picks up
+    "cebu": "PH", "borneo": "MY", "java": "ID", "bali": "ID",
+    "sardegna": "IT", "sicilia": "IT",
+    "muslim": "", "christian": "", "buddhist": "", "hindu": "",
+}
+
+
+# IOC (International Olympic Committee) 3-letter country codes -> alpha-2.
+# Wikipedia's {{flag}} / {{flagicon}} templates accept the IOC code as
+# the parameter; e.g. {{flag|FRA}} means France. We need this because
+# some articles use 3-letter codes instead of 2-letter ISO.
+_IOC_TO_ALPHA2: dict[str, str] = {
+    "AFG": "AF", "ALB": "AL", "ALG": "DZ", "AND": "AD", "ANG": "AO",
+    "ARG": "AR", "ARM": "AM", "AUS": "AU", "AUT": "AT", "AZE": "AZ",
+    "BAH": "BS", "BRN": "BH", "BAN": "BD", "BAR": "BB", "BLR": "BY",
+    "BEL": "BE", "BIZ": "BZ", "BEN": "BJ", "BER": "BM", "BHU": "BT",
+    "BOL": "BO", "BIH": "BA", "BOT": "BW", "BRA": "BR", "BRU": "BN",
+    "BUL": "BG", "BFA": "BF", "BDI": "BI", "CAM": "KH", "CMR": "CM",
+    "CAN": "CA", "CPV": "CV", "CAF": "CF", "CHA": "TD", "CHI": "CL",
+    "CHN": "CN", "COL": "CO", "COM": "KM", "CGO": "CG", "COD": "CD",
+    "CRC": "CR", "CIV": "CI", "CRO": "HR", "CUB": "CU", "CYP": "CY",
+    "CZE": "CZ", "DEN": "DK", "DJI": "DJ", "DMA": "DM", "DOM": "DO",
+    "ECU": "EC", "EGY": "EG", "ESA": "SV", "GEQ": "GQ", "ERI": "ER",
+    "EST": "EE", "ETH": "ET", "FIJ": "FJ", "FIN": "FI", "FRA": "FR",
+    "GAB": "GA", "GAM": "GM", "GEO": "GE", "GER": "DE", "GHA": "GH",
+    "GRE": "GR", "GRN": "GD", "GUA": "GT", "GUI": "GN", "GBS": "GW",
+    "GUY": "GY", "HAI": "HT", "HON": "HN", "HUN": "HU", "ISL": "IS",
+    "IND": "IN", "INA": "ID", "IRI": "IR", "IRQ": "IQ", "IRL": "IE",
+    "ISR": "IL", "ITA": "IT", "JAM": "JM", "JPN": "JP", "JOR": "JO",
+    "KAZ": "KZ", "KEN": "KE", "KIR": "KI", "PRK": "KP", "KOR": "KR",
+    "KUW": "KW", "KGZ": "KG", "LAO": "LA", "LAT": "LV", "LIB": "LB",
+    "LES": "LS", "LBR": "LR", "LBA": "LY", "LIE": "LI", "LTU": "LT",
+    "LUX": "LU", "MAD": "MG", "MAW": "MW", "MAS": "MY", "MDV": "MV",
+    "MLI": "ML", "MLT": "MT", "MHL": "MH", "MTN": "MR", "MRI": "MU",
+    "MEX": "MX", "FSM": "FM", "MDA": "MD", "MON": "MC", "MGL": "MN",
+    "MNE": "ME", "MAR": "MA", "MOZ": "MZ", "MYA": "MM", "NAM": "NA",
+    "NRU": "NR", "NEP": "NP", "NED": "NL", "NZL": "NZ", "NCA": "NI",
+    "NIG": "NE", "NGR": "NG", "MKD": "MK", "NOR": "NO", "OMA": "OM",
+    "PAK": "PK", "PLW": "PW", "PAN": "PA", "PNG": "PG", "PAR": "PY",
+    "PER": "PE", "PHI": "PH", "POL": "PL", "POR": "PT", "QAT": "QA",
+    "ROU": "RO", "RUS": "RU", "RWA": "RW", "SAM": "WS", "SMR": "SM",
+    "STP": "ST", "KSA": "SA", "SEN": "SN", "SRB": "RS", "SEY": "SC",
+    "SLE": "SL", "SGP": "SG", "SVK": "SK", "SLO": "SI", "SOL": "SB",
+    "SOM": "SO", "RSA": "ZA", "ESP": "ES", "SRI": "LK", "SUD": "SD",
+    "SUR": "SR", "SWE": "SE", "SUI": "CH", "SYR": "SY", "TPE": "TW",
+    "TJK": "TJ", "TAN": "TZ", "THA": "TH", "TLS": "TL", "TOG": "TG",
+    "TGA": "TO", "TTO": "TT", "TUN": "TN", "TUR": "TR", "TKM": "TM",
+    "TUV": "TV", "UGA": "UG", "UKR": "UA", "UAE": "AE", "GBR": "GB",
+    "USA": "US", "URU": "UY", "UZB": "UZ", "VAN": "VU", "VEN": "VE",
+    "VIE": "VN", "YEM": "YE", "ZAM": "ZM", "ZIM": "ZW",
 }
 
 
@@ -1041,6 +1217,9 @@ class FreeEventAggregator:
         limit: int = 50,
     ) -> list[EventRecord]:
         import asyncio
+        # Use return_exceptions=True so a failing source doesn't
+        # cancel the other. We merge whatever each source returns
+        # and skip the failed batch silently.
         results = await asyncio.gather(
             self.wikidata.search(
                 interest_key=interest_key,
@@ -1055,10 +1234,19 @@ class FreeEventAggregator:
                 city=city,
                 limit=limit,
             ),
+            return_exceptions=True,
         )
         merged: list[EventRecord] = []
         seen: set[tuple[str, str, str]] = set()
         for batch in results:
+            if isinstance(batch, BaseException):
+                # One source failed (timeout, rate-limit, parse error).
+                # Skip it and keep whatever the other returned.
+                logger.info(
+                    "Free-event source failed: %s",
+                    type(batch).__name__,
+                )
+                continue
             for e in batch:
                 key = (e.name.lower(), e.city.lower(), e.starts_at.isoformat() if e.starts_at else "")
                 if key in seen:

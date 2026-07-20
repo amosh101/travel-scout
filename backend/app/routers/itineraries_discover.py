@@ -455,23 +455,34 @@ async def _build_itinerary_for(
     if non_anchor_interests and not is_anonymous:
         from app.clients.free_events import _FREE_EVENTS_CACHE
 
+        # Bound the number of concurrent Wikipedia + Wikidata calls
+        # to 2 — their per-IP rate limits degrade badly when we hit
+        # them in parallel, and we want at least one of the queries
+        # to succeed rather than all of them time out.
+        sem = asyncio.Semaphore(2)
+
         async def _search_with_cap(interest: str):
             cache_key = (interest, d_country or "", candidate_name.lower())
             cached = _FREE_EVENTS_CACHE.get(cache_key)
             if cached is not None:
                 return cached
             try:
-                result = await asyncio.wait_for(
-                    free_agg.search(
-                        interest_key=interest,
-                        country_alpha2=d_country,
-                        start_date=date_from,
-                        end_date=date_to,
-                        city=candidate_name,
-                        limit=5,
-                    ),
-                    timeout=2.5,
-                )
+                # 6s per interest — gives Wikidata + Wikipedia enough
+                # time to answer even when their rate limit is briefly
+                # throttling us. The cache makes this a one-time cost
+                # per (interest, country, city) tuple.
+                async with sem:
+                    result = await asyncio.wait_for(
+                        free_agg.search(
+                            interest_key=interest,
+                            country_alpha2=d_country,
+                            start_date=date_from,
+                            end_date=date_to,
+                            city=candidate_name,
+                            limit=5,
+                        ),
+                        timeout=6.0,
+                    )
                 _FREE_EVENTS_CACHE[cache_key] = result
                 return result
             except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
@@ -480,9 +491,10 @@ async def _build_itinerary_for(
                 return []
 
         try:
-            per_interest = []
-            for k in non_anchor_interests:
-                per_interest.append(await _search_with_cap(k))
+            per_interest = await asyncio.gather(
+                *(_search_with_cap(k) for k in non_anchor_interests),
+                return_exceptions=True,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("Free event aggregator failed: %s", e)
             per_interest = []
