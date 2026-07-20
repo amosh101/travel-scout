@@ -308,23 +308,31 @@ async def _build_itinerary_for(
             "window_end": win_to.isoformat(),
         }
     elif holiday_alerts:
-        anchor = holiday_alerts[0]
-        anchor_day = date.fromisoformat(anchor["date"])
-        win_from, win_to = compute_event_window(anchor_day)
-        event_window_meta = {
-            "kind": "public_holiday",
-            "anchor_name": anchor["name"],
-            "anchor_start": anchor["date"],
-            "anchor_end": anchor["date"],
-            "window_start": win_from.isoformat(),
-            "window_end": win_to.isoformat(),
-        }
+        # T8a fix: DON'T auto-anchor on the first holiday for non-F1
+        # trips. The user's window is wide (e.g. next 6 months); the
+        # holiday-anchor logic is for F1 weekend trips, not for
+        # "what's happening in this city in my window" queries. Keep
+        # ``event_window_meta = None`` so the result uses the full
+        # profile window.
+        pass
 
     # T8c: holidays are filtered to the event window (or the profile
     # window if no anchor event was found). The loop above already
     # filtered to the profile window; re-filter to the event window now
     # that we have it.
-    if event_window_meta is not None:
+    #
+    # Disable the narrow filter for now: for any non-trivial query
+    # (e.g. "Sao Paulo next 6 months" with 1 F1 race + 6 holidays), the
+    # narrow event window strips the holidays that don't fall in the
+    # race's 5-day weekend, leaving the user with an itinerary that
+    # says "this trip has 1 race and 0 holidays" when in fact there
+    # are 6 holidays in their trip horizon. Returning all events in
+    # the profile window is the honest, user-aligned behaviour.
+    if False and (
+        event_window_meta is not None
+        and event_window_meta.get("kind") == "f1_race"
+        and len(races_at) == 1
+    ):
         win_from = date.fromisoformat(event_window_meta["window_start"])
         win_to = date.fromisoformat(event_window_meta["window_end"])
         races_at = [
@@ -348,9 +356,14 @@ async def _build_itinerary_for(
     # T8b: enforce 14-day hard cap. Beyond that, the user is planning
     # something else, not a trip-around-an-event. Drop with a warning so
     # the caller can see why.
-    if duration > MAX_ITINERARY_DAYS:
+    # T8b: enforce 14-day hard cap on EVENT-WINDOW trips. Beyond that,
+    # the user is planning something else, not a trip-around-an-event.
+    # Trips without an event anchor (e.g. Bangkok, no F1 race) keep
+    # the user's full date range so we don't drop the only candidate
+    # they care about.
+    if event_window_meta is not None and duration > MAX_ITINERARY_DAYS:
         logger.info(
-            "Dropping itinerary for %s: window %s..%s (%d days) exceeds cap",
+            "Dropping itinerary for %s: event window %s..%s (%d days) exceeds cap",
             candidate_name, it_start, it_end, duration,
         )
         return None, None
@@ -367,7 +380,7 @@ async def _build_itinerary_for(
         )
         return None, None
 
-    # F1 keyword match for the "anchor events" label. If the user picked
+    # If we have an event window, use it as the itinerary dates.
     # an F1-related interest, an F1 race at this destination is the
     # anchor.
     f1_kw = {"f1", "f1 / motorsport", "motorsport", "formula 1", "racing"}
