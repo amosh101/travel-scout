@@ -18,6 +18,11 @@ class MeOut(BaseModel):
     next_billing_date: Optional[str] = None
     home_airport: Optional[str] = None
     onboarding_complete: bool = False
+    # T3 wizard output (denormalized from user_interests / a future
+    # user_destinations M2M, kept in a JSON column on User for the
+    # GET /me round-trip). Empty list when the user has not onboarded.
+    interests: list[str] = Field(default_factory=list)
+    destinations: list[str] = Field(default_factory=list)
     role: str = "user"
 
 

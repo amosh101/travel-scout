@@ -117,6 +117,17 @@ class User(Base):
     emergency_contact_name = Column(String(255), nullable=True)
     emergency_contact_phone = Column(String(32), nullable=True)
 
+    # --- Onboarding (T3 wizard output) ---
+    # IATA 3-char code, 8 leaves headroom for future multi-airport preferences.
+    home_airport = Column(String(8), nullable=True)
+    onboarding_complete = Column(Boolean, nullable=False, default=False)
+    # JSON denormalized cache of the wizard's interest/destination keys.
+    # The M2M ``user_interests`` table stays the source of truth for
+    # interest priority; ``interests_json`` is the wire-format cache
+    # returned by GET /me.
+    interests_json = Column(portable_json(), nullable=True)
+    destinations_json = Column(portable_json(), nullable=True)
+
     created_at = created_at_column()
     updated_at = updated_at_column()
 

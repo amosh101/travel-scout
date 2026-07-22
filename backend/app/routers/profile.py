@@ -586,8 +586,10 @@ async def get_me(
         name=user_full.name or None,
         tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
         next_billing_date=next_billing,
-        home_airport=None,
-        onboarding_complete=False,
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
         role=role_key,
     )
 
@@ -637,12 +639,9 @@ async def patch_me(
     if patch.emergency_contact_phone is not None:
         updates["emergency_contact_phone"] = patch.emergency_contact_phone
     if patch.home_airport is not None:
-        # home_airport lives on the user-side preference; today the column
-        # is not on User — store on UserPreferences if present, else skip.
-        # Hard rule: no schema changes. We just log it and persist nothing
-        # in this build. The frontend round-trips the value on the next
-        # GET /me once the column lands.
-        pass
+        # home_airport is now a real column (migration
+        # 0002_user_onboarding_fields). Persist it on the User row.
+        updates["home_airport"] = patch.home_airport
 
     for attr, value in updates.items():
         setattr(user_full, attr, value)
@@ -698,8 +697,10 @@ async def patch_me(
         name=user_full.name or None,
         tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
         next_billing_date=next_billing,
-        home_airport=None,
-        onboarding_complete=False,
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
         role=role_key,
     )
 
@@ -709,17 +710,9 @@ async def patch_me(
 # -----------------------------------------------------------------------------
 # Stores the wizard output (home airport, interest keys, destination
 # wishlist) on the current user. ``skippable=True`` records the
-# "skipped" audit action but does not flip ``onboarding_complete`` (so
-# the UI can prompt again next login).
-#
-# SCHEMA GAP — see BLOCK comment on the kanban card t_83ea9222:
-# the User model has no ``home_airport`` column, no JSON ``interests`` /
-# ``destinations`` column, and no ``onboarding_complete`` flag. The task
-# hard rule forbids schema changes in this card, so the endpoint
-# validates the body and writes the audit row, but the persisted values
-# are no-ops (mirroring the same gap PATCH /me already documents for
-# home_airport). GET /me still hardcodes None / False for both fields
-# until a follow-up card adds the columns.
+# "skipped" audit action and leaves ``onboarding_complete=False`` (so
+# the UI can prompt again next login). A real persist is now in place
+# via the columns added in migration 0002_user_onboarding_fields.
 # -----------------------------------------------------------------------------
 
 
@@ -746,16 +739,17 @@ async def post_me_onboarding(
     )
     user_full = (await session.execute(stmt)).scalar_one()
 
-    # ---- Persist (no-op until the User columns land) -----------------
-    # See the SCHEMA GAP block above. The values are accepted on the
-    # wire so the UI round-trips correctly the moment a follow-up card
-    # adds the columns; we just don't store them on the ORM today.
-    # When the migration lands, replace these ``pass`` lines with:
-    #   user_full.home_airport = payload.home_airport
-    #   user_full.onboarding_complete = not payload.skippable
-    #   (interests/destinations go into the JSON columns, OR into the
-    #   user_interests / user_destinations M2M tables — TBD)
-    _ = payload  # referenced for the audit log metadata below
+    # ---- Persist the wizard output on the User row --------------------
+    # Migration 0002_user_onboarding_fields adds the four columns this
+    # writes to. We always overwrite with the latest payload: the wizard
+    # is meant to be re-runnable (e.g. the user updates their home
+    # airport a week later), and the audit row records each save.
+    user_full.home_airport = payload.home_airport
+    user_full.interests_json = list(payload.interests)
+    user_full.destinations_json = list(payload.destinations)
+    # ``skippable=True`` means the user chose to defer; do NOT mark them
+    # complete so the UI can prompt them again next login.
+    user_full.onboarding_complete = not payload.skippable
 
     # ---- Audit log ---------------------------------------------------
     audit_action = "onboarding_skipped" if payload.skippable else "onboarding_completed"
@@ -798,8 +792,10 @@ async def post_me_onboarding(
         name=user_full.name or None,
         tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
         next_billing_date=None,
-        home_airport=None,  # SCHEMA GAP — no column yet
-        onboarding_complete=False,  # SCHEMA GAP — no column yet
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
         role=role_key,
     )
 
@@ -812,4 +808,6 @@ __all__ = [
     "IntakeResponse",
     "MeOut",
     "MePatch",
+    "OnboardingIn",
+    "OnboardingOut",
 ]
