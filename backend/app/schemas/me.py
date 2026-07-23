@@ -64,3 +64,18 @@ class OnboardingOut(MeOut):
     can diff the two responses if they want to)."""
 
     pass
+
+
+class ChangePasswordIn(BaseModel):
+    """Body for POST /me/change-password.
+
+    Used by the user to rotate their own password. The endpoint verifies
+    ``old_password`` against the current hash (returns 400 on mismatch,
+    deliberately opaque to avoid leaking which field was wrong) and
+    sets a fresh bcrypt hash on success (204).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    old_password: str = Field(min_length=1, max_length=4096)
+    new_password: str = Field(min_length=8, max_length=4096)

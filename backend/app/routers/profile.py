@@ -33,7 +33,8 @@ from sqlalchemy.orm import selectinload
 from app.database import get_session
 from app.models import Interest, Subscription, User, UserInterest
 from app.models import ActorKind, UserRole
-from app.schemas.me import MeOut, MePatch, OnboardingIn, OnboardingOut
+from app.schemas.me import ChangePasswordIn, MeOut, MePatch, OnboardingIn, OnboardingOut
+from app.security import hash_password, verify_password
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -800,6 +801,61 @@ async def post_me_onboarding(
     )
 
 
+# -----------------------------------------------------------------------------
+# POST /me/change-password — user-driven password rotation
+# -----------------------------------------------------------------------------
+# T3 follow-up: the user can rotate their own password from the profile
+# page. The auth dependency (get_current_user) returns 401 if no JWT;
+# Pydantic returns 422 if the new password is too short; we return 400
+# on a wrong old password (opaque on purpose — we don't leak whether the
+# auth was bad or the old password was wrong). On success we re-hash with
+# bcrypt and write an audit row, then return 204 with no body.
+@router.post(
+    "/me/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def change_my_password(
+    body: ChangePasswordIn,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    # Re-fetch with roles preloaded, same pattern as the other /me handlers.
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # 400 on wrong old password — opaque to avoid leaking which field was wrong.
+    if not verify_password(body.old_password, user_full.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="old password does not match",
+        )
+
+    # Re-hash the new password with the same bcrypt settings as registration.
+    user_full.password_hash = hash_password(body.new_password)
+
+    # Audit row. Action is fixed; metadata records the rotation for security review.
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="password_changed",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={},
+        actor_kind=ActorKind.USER,
+    )
+
+    await session.commit()
+    # 204 No Content — return an empty Response so FastAPI doesn't try to
+    # serialize anything.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 __all__ = [
     "router",
     "INTEREST_CATALOG",
@@ -810,4 +866,5 @@ __all__ = [
     "MePatch",
     "OnboardingIn",
     "OnboardingOut",
+    "ChangePasswordIn",
 ]
