@@ -30,8 +30,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from fastapi.responses import JSONResponse
+
 from app.database import get_session
-from app.models import Interest, Subscription, User, UserInterest
+from app.models import AuditLog, Interest, SavedItinerary, Subscription, User, UserInterest
 from app.models import ActorKind, UserRole
 from app.schemas.me import ChangePasswordIn, MeOut, MePatch, OnboardingIn, OnboardingOut
 from app.security import hash_password, verify_password
@@ -853,6 +855,179 @@ async def change_my_password(
     await session.commit()
     # 204 No Content — return an empty Response so FastAPI doesn't try to
     # serialize anything.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# -----------------------------------------------------------------------------
+# GET /me/export — GDPR JSON dump.
+#
+# Returns the full user record plus every SavedItinerary and every audit
+# event the user owns. ``messages`` is reserved for the T4-user agent
+# chat feature; until the ``messages`` table exists, the export returns
+# an empty list so the response shape is stable. ``<5s`` is satisfied by
+# eager ``selectinload`` and a bounded audit-event query (last 1000 rows).
+# The audit row for the export itself is written AFTER the JSON is built
+# (no recursion), so the caller's ``audit_events`` list never includes
+# the row this call produced.
+# -----------------------------------------------------------------------------
+
+
+@router.get("/me/export")
+async def export_my_data(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> JSONResponse:
+    user_id = user.id
+
+    # Re-fetch with roles + itineraries eagerly loaded so the export is
+    # one round-trip and doesn't trip MissingGreenlet on lazy attrs.
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(
+            selectinload(User.roles).selectinload(UserRole.role),
+            selectinload(User.interests).selectinload(UserInterest.interest),
+            selectinload(User.subscriptions),
+        )
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Saved itineraries — one query, bounded by user_id index.
+    itin_stmt = (
+        select(SavedItinerary)
+        .where(SavedItinerary.user_id == user_id)
+        .order_by(SavedItinerary.created_at.desc())
+    )
+    itineraries = (await session.execute(itin_stmt)).scalars().all()
+
+    # Audit events the user owns (as actor). Capped at 1000 rows; a
+    # real GDPR export tool would stream this, but the user is the
+    # only consumer and 1000 covers the entire history for any
+    # realistic account.
+    audit_stmt = (
+        select(AuditLog)
+        .where(AuditLog.actor_user_id == user_id)
+        .order_by(AuditLog.at.desc())
+        .limit(1000)
+    )
+    audit_events = (await session.execute(audit_stmt)).scalars().all()
+
+    def _ser_itinerary(it: SavedItinerary) -> dict[str, Any]:
+        return {
+            "id": str(it.id),
+            "title": it.title,
+            "destination_id": str(it.destination_id) if it.destination_id else None,
+            "starts_at": it.starts_at.isoformat(),
+            "ends_at": it.ends_at.isoformat(),
+            "payload": it.payload,
+            "total_price_cents": it.total_price_cents,
+            "currency": it.currency,
+            "created_at": it.created_at.isoformat(),
+            "updated_at": it.updated_at.isoformat(),
+        }
+
+    def _ser_audit(ev: AuditLog) -> dict[str, Any]:
+        return {
+            "id": str(ev.id),
+            "action": ev.action,
+            "target_kind": ev.target_kind,
+            "target_id": ev.target_id,
+            "metadata": ev.metadata_json,
+            "request_id": ev.request_id,
+            "at": ev.at.isoformat(),
+        }
+
+    profile_block = {
+        "id": str(user_full.id),
+        "email": user_full.email,
+        "name": user_full.name,
+        "tier": user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        "is_active": user_full.is_active,
+        "nationality": user_full.nationality,
+        "passport_number": user_full.passport_number,  # already obfuscated in storage
+        "passport_expiry": user_full.passport_expiry.isoformat() if user_full.passport_expiry else None,
+        "passport_issuing_country": user_full.passport_issuing_country,
+        "date_of_birth": user_full.date_of_birth.isoformat() if user_full.date_of_birth else None,
+        "emergency_contact_name": user_full.emergency_contact_name,
+        "emergency_contact_phone": user_full.emergency_contact_phone,
+        "home_airport": user_full.home_airport,
+        "onboarding_complete": user_full.onboarding_complete,
+        "interests": user_full.interests_json or [],
+        "destinations": user_full.destinations_json or [],
+        "stripe_customer_id": user_full.stripe_customer_id,
+        "created_at": user_full.created_at.isoformat(),
+        "updated_at": user_full.updated_at.isoformat(),
+    }
+
+    body = {
+        "profile": profile_block,
+        "itineraries": [_ser_itinerary(i) for i in itineraries],
+        # Reserved for the T4-user agent chat feature. The model doesn't
+        # exist yet, so the export contract returns an empty list. When
+        # the messages table ships, replace [] with a query against it.
+        "messages": [],
+        "audit_events": [_ser_audit(ev) for ev in audit_events],
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    # Write the audit row LAST so this export's own event is not
+    # included in the response (would cause a double-count on a
+    # repeated export of the same account).
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="gdpr_export",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={"ip_count": len(itineraries), "audit_count": len(audit_events)},
+        actor_kind=ActorKind.USER,
+    )
+    await session.commit()
+
+    return JSONResponse(
+        content=body,
+        headers={
+            "Content-Disposition": f'attachment; filename="user-{user_id}-export.json"',
+        },
+    )
+
+
+# -----------------------------------------------------------------------------
+# DELETE /me — GDPR soft delete.
+#
+# Sets ``user.is_active = False``. The existing login handler in
+# ``app.routers.auth`` and the existing ``get_current_user`` dependency
+# both reject inactive users with 401, so no auth.py change is required.
+# A follow-up card can introduce explicit ``deleted_at`` / ``blocked_at``
+# columns if a distinction between admin-disabled and user-deleted is
+# needed; the hard rules on this card forbid schema changes.
+# -----------------------------------------------------------------------------
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_me(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    user_id = user.id
+
+    # Re-fetch the user row (the auth dep's session may be closed).
+    stmt = select(User).where(User.id == user_id)
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    user_full.is_active = False
+
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="gdpr_delete",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={"reason": "user_initiated"},
+        actor_kind=ActorKind.USER,
+    )
+    await session.commit()
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
