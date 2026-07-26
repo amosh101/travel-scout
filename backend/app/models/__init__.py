@@ -73,6 +73,25 @@ class ActorKind(str, enum.Enum):
     SYSTEM = "system"
 
 
+class MessageSenderRole(str, enum.Enum):
+    """Who sent a chat message in a saved-itinerary thread.
+
+    Mirrored in the SA enum used by ``messages.sender_role``. The string
+    values match exactly (Postgres/SQLite enum coercion relies on the
+    string form being stable across migrations).
+    """
+    USER = "user"
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+# SQLAlchemy-side enum type for ``messages.sender_role``. Created lazily
+# (see alembic migrations) so tests using SQLite can also instantiate.
+_MESSAGE_SENDER_ROLE_SA = Enum(
+    MessageSenderRole, name="message_sender_role", values_callable=lambda e: [m.value for m in e]
+)
+
+
 class InterestPriority(int, enum.Enum):
     LOW = 3
     MEDIUM = 2
@@ -469,6 +488,94 @@ class BookingsLog(Base):
 
 
 # -----------------------------------------------------------------------------
+# Booking-agent chat thread (T8e-booking-agent, 2026-07-24)
+# -----------------------------------------------------------------------------
+
+
+class Message(Base):
+    """A single chat message in a saved-itinerary thread (concierge tier).
+
+    Threads are 1:1 between a user and an agent. The agent contacts the
+    user off-platform for passport/date details; messages here carry the
+    structured summary the user needs (dates, passport reference, visa
+    status) and any file attachments (passport scans, hotel confirmations).
+    """
+    __tablename__ = "messages"
+
+    id = uuid_pk_column()
+    itinerary_id = Column(
+        PortableUUID(),
+        ForeignKey("saved_itineraries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sender_user_id = Column(
+        PortableUUID(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sender_role = Column(
+        _MESSAGE_SENDER_ROLE_SA,
+        nullable=False,
+    )
+    body = Column(Text, nullable=False)
+    # When True, this message is the auto-generated booking summary the
+    # user is meant to read + act on (dates, passport ref, visa status,
+    # next steps). The frontend renders it as a styled summary card; the
+    # agent sets this on outcome confirm.
+    is_summary = Column(Boolean, nullable=False, default=False)
+    # Optional reference to the BookingsLog row this message is tied to
+    # (e.g. the summary on outcome confirm). Lets us join thread messages
+    # back to the booking state machine for the agent dashboard.
+    booking_id = Column(
+        PortableUUID(),
+        ForeignKey("bookings_log.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = created_at_column()
+
+    __table_args__ = (
+        Index("ix_messages_itinerary", "itinerary_id", "created_at"),
+        Index("ix_messages_sender", "sender_user_id"),
+        Index("ix_messages_booking", "booking_id"),
+    )
+
+
+class MessageAttachment(Base):
+    """A file attached to a chat message.
+
+    Storage: the file payload lives on disk under MEDIA_ROOT (configured
+    via ``settings.media_root``); this row holds the reference + metadata.
+    The download endpoint (``GET /api/messages/attachments/{id}``) does
+    the auth check and streams the file.
+
+    v1 (2026-07-24): files are NOT encrypted at rest. Storage paths are
+    per-tenant, the auth check is on the DB row. A full-PII path with
+    encryption-at-rest is gated behind a security review.
+    """
+    __tablename__ = "message_attachments"
+
+    id = uuid_pk_column()
+    message_id = Column(
+        PortableUUID(),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filename = Column(String(255), nullable=False)  # sanitised, no path
+    mime_type = Column(String(64), nullable=False)  # validated allowlist
+    size_bytes = Column(Integer, nullable=False)  # bounded by MAX_BYTES
+    sha256 = Column(String(64), nullable=False)  # hex digest
+    storage_path = Column(String(1024), nullable=False)  # server-local
+    # Optional kind tag — passport_scan | visa_copy | booking_confirmation
+    # | hotel_voucher | flight_ticket | other
+    kind = Column(String(64), nullable=True)
+    created_at = created_at_column()
+
+    __table_args__ = (
+        Index("ix_attachments_message", "message_id"),
+    )
+
+
+# -----------------------------------------------------------------------------
 # Algo weights (admin-tunable scoring parameters)
 # -----------------------------------------------------------------------------
 
@@ -632,6 +739,9 @@ __all__ = [
     "FlightSource",
     "Interest",
     "InterestPriority",
+    "Message",
+    "MessageAttachment",
+    "MessageSenderRole",
     "Permission",
     "Role",
     "RolePermission",

@@ -28,8 +28,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0002_user_onboarding_fields"
-down_revision: Union[str, None] = "0001_initial"
+revision: str = "0005_user_onboarding_fields"
+down_revision: Union[str, None] = "0004_interest_kind"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

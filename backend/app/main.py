@@ -22,6 +22,7 @@ from app.routers import (
     discover,
     itineraries,
     itineraries_discover,
+    messages,
     profile,
     refdata,
     search,
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_weights.router, prefix=settings.api_v1_prefix)
     app.include_router(admin_sources.router, prefix=settings.api_v1_prefix)
     app.include_router(agent.router, prefix=settings.api_v1_prefix)  # T8e
+    app.include_router(messages.router, prefix=settings.api_v1_prefix)  # T8e-chat
     app.include_router(refdata.router, prefix=settings.api_v1_prefix)
     app.include_router(auth.router, prefix=settings.api_v1_prefix)
     app.include_router(profile.router, prefix=settings.api_v1_prefix)
