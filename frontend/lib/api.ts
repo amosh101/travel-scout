@@ -40,13 +40,24 @@ export async function apiFetch<T>(
   const init: RequestInit = {
     ...rest,
     headers: {
-      "Content-Type": "application/json",
+      // Skip the default JSON Content-Type if the caller is sending a
+      // FormData (the browser sets the multipart boundary itself).
+      ...(body instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers ?? {}),
     },
   };
   if (body !== undefined) {
-    init.body = typeof body === "string" ? body : JSON.stringify(body);
+    // FormData goes through as-is (don't stringify). Strings go through
+    // verbatim (the caller already serialised). Anything else (plain
+    // object) gets JSON-encoded.
+    if (body instanceof FormData || typeof body === "string") {
+      init.body = body;
+    } else {
+      init.body = JSON.stringify(body);
+    }
   }
   const res = await fetch(url, init);
   if (!res.ok) {

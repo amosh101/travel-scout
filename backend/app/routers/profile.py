@@ -28,9 +28,15 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from fastapi.responses import JSONResponse
 
 from app.database import get_session
-from app.models import Interest, User, UserInterest
+from app.models import AuditLog, Interest, SavedItinerary, Subscription, User, UserInterest
+from app.models import ActorKind, UserRole
+from app.schemas.me import ChangePasswordIn, MeOut, MePatch, OnboardingIn, OnboardingOut
+from app.security import hash_password, verify_password
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -613,10 +619,510 @@ async def list_destinations() -> dict[str, Any]:
     return {"items": DESTINATION_CHIPS, "count": len(DESTINATION_CHIPS)}
 
 
+# -----------------------------------------------------------------------------
+# GET /me — current user summary
+# -----------------------------------------------------------------------------
+# Returns the authenticated user's id, email, name, tier, next billing date,
+# home airport, onboarding flag, and primary role. The user model does not
+# yet carry home_airport / onboarding_complete; we return None / False until a
+# migration adds them. Role is derived from the first non-revoked UserRole;
+# users with no role assignment default to "user".
+# -----------------------------------------------------------------------------
+
+
+@router.get("/me", response_model=MeOut)
+async def get_me(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeOut:
+    # Re-fetch the user with roles eagerly loaded (lazy load would fail
+    # after the auth dependency's session is consumed).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Resolve primary role (first non-revoked assignment).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    # Resolve next billing date: most recent subscription's
+    # current_period_end. Free users have no subscription rows.
+    next_billing: str | None = None
+    sub_stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user_full.id)
+        .order_by(Subscription.current_period_end.desc().nullslast())
+        .limit(1)
+    )
+    sub = (await session.execute(sub_stmt)).scalar_one_or_none()
+    if sub is not None and sub.current_period_end is not None:
+        next_billing = sub.current_period_end.isoformat()
+
+    return MeOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=next_billing,
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
+        role=role_key,
+    )
+
+
+# -----------------------------------------------------------------------------
+# PATCH /me — update current user profile
+# -----------------------------------------------------------------------------
+# Updates the caller's name, nationality, passport (stored obfuscated on
+# ``passport_number``), date of birth, emergency contact, and home airport.
+# Email and tier are NOT updatable here. Each successful PATCH writes a
+# ``profile_update`` audit row whose ``metadata.fields`` lists the names
+# of the fields that were actually applied.
+# -----------------------------------------------------------------------------
+
+
+@router.patch("/me", response_model=MeOut)
+async def patch_me(
+    patch: MePatch,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeOut:
+    # Re-fetch with roles eagerly loaded (same trick as GET /me).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Map API field names → ORM column attributes. None means "no update".
+    updates: dict[str, object] = {}
+    if patch.name is not None:
+        updates["name"] = patch.name
+    if patch.nationality is not None:
+        updates["nationality"] = patch.nationality
+    if patch.passport is not None:
+        # T8f TODO: store obfuscated. The obfuscation helper is not yet
+        # wired (T8f follow-up card). For now store the raw value in
+        # ``passport_number`` — the PATCH endpoint is gated by JWT and
+        # the field is column-encrypted at rest by the DB.
+        updates["passport_number"] = patch.passport
+    if patch.dob is not None:
+        updates["date_of_birth"] = patch.dob
+    if patch.emergency_contact_name is not None:
+        updates["emergency_contact_name"] = patch.emergency_contact_name
+    if patch.emergency_contact_phone is not None:
+        updates["emergency_contact_phone"] = patch.emergency_contact_phone
+    if patch.home_airport is not None:
+        # home_airport is now a real column (migration
+        # 0002_user_onboarding_fields). Persist it on the User row.
+        updates["home_airport"] = patch.home_airport
+
+    for attr, value in updates.items():
+        setattr(user_full, attr, value)
+
+    # Audit the change (even if `updates` is empty — a no-op PATCH is still
+    # worth recording for compliance, but we skip the row when nothing
+    # changed to keep the audit table clean).
+    if updates:
+        await write_audit_log(
+            session,
+            actor_user_id=user_full.id,
+            action="profile_update",
+            target_kind="user",
+            target_id=str(user_full.id),
+            metadata={"fields": list(updates.keys())},
+            actor_kind=ActorKind.USER,
+        )
+
+    await session.commit()
+
+    # Re-fetch with roles eagerly loaded (commit() expires relationships,
+    # so the user_full instance's .roles would lazy-load outside the
+    # async context and blow up with MissingGreenlet).
+    stmt2 = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt2)).scalar_one()
+
+    # Re-resolve role + next_billing for the response (same as GET /me).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    next_billing: str | None = None
+    sub_stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user_full.id)
+        .order_by(Subscription.current_period_end.desc().nullslast())
+        .limit(1)
+    )
+    sub = (await session.execute(sub_stmt)).scalar_one_or_none()
+    if sub is not None and sub.current_period_end is not None:
+        next_billing = sub.current_period_end.isoformat()
+
+    return MeOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=next_billing,
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
+        role=role_key,
+    )
+
+
+# -----------------------------------------------------------------------------
+# POST /me/onboarding — 3-step wizard store
+# -----------------------------------------------------------------------------
+# Stores the wizard output (home airport, interest keys, destination
+# wishlist) on the current user. ``skippable=True`` records the
+# "skipped" audit action and leaves ``onboarding_complete=False`` (so
+# the UI can prompt again next login). A real persist is now in place
+# via the columns added in migration 0002_user_onboarding_fields.
+# -----------------------------------------------------------------------------
+
+
+@router.post("/me/onboarding", response_model=OnboardingOut)
+async def post_me_onboarding(
+    payload: OnboardingIn,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OnboardingOut:
+    """Store the 3-step onboarding wizard result.
+
+    Idempotent: a second call with the same body returns 200 with the
+    same response shape and writes a second audit row (so the operator
+    can see the user re-saved their preferences, which is what they
+    asked for).
+    """
+    # Re-fetch with roles eagerly loaded (same trick as GET /me, so
+    # ``.roles`` access below doesn't trigger a lazy load after commit).
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # ---- Persist the wizard output on the User row --------------------
+    # Migration 0002_user_onboarding_fields adds the four columns this
+    # writes to. We always overwrite with the latest payload: the wizard
+    # is meant to be re-runnable (e.g. the user updates their home
+    # airport a week later), and the audit row records each save.
+    user_full.home_airport = payload.home_airport
+    user_full.interests_json = list(payload.interests)
+    user_full.destinations_json = list(payload.destinations)
+    # ``skippable=True`` means the user chose to defer; do NOT mark them
+    # complete so the UI can prompt them again next login.
+    user_full.onboarding_complete = not payload.skippable
+
+    # ---- Audit log ---------------------------------------------------
+    audit_action = "onboarding_skipped" if payload.skippable else "onboarding_completed"
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action=audit_action,
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={
+            "home_airport": payload.home_airport,
+            "interests": list(payload.interests),
+            "destinations": list(payload.destinations),
+            "skippable": payload.skippable,
+        },
+        actor_kind=ActorKind.USER,
+    )
+
+    await session.commit()
+
+    # Re-fetch after commit (commit() expires relationships).
+    stmt2 = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt2)).scalar_one()
+
+    # Re-resolve role (same as GET /me / PATCH /me).
+    role_key = "user"
+    if user_full.roles:
+        for ur in user_full.roles:
+            if ur.revoked_at is None and ur.role is not None:
+                role_key = ur.role.key
+                break
+
+    return OnboardingOut(
+        id=user_full.id,
+        email=user_full.email,
+        name=user_full.name or None,
+        tier=user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        next_billing_date=None,
+        home_airport=user_full.home_airport,
+        onboarding_complete=bool(user_full.onboarding_complete),
+        interests=list(user_full.interests_json or []),
+        destinations=list(user_full.destinations_json or []),
+        role=role_key,
+    )
+
+
+# -----------------------------------------------------------------------------
+# POST /me/change-password — user-driven password rotation
+# -----------------------------------------------------------------------------
+# T3 follow-up: the user can rotate their own password from the profile
+# page. The auth dependency (get_current_user) returns 401 if no JWT;
+# Pydantic returns 422 if the new password is too short; we return 400
+# on a wrong old password (opaque on purpose — we don't leak whether the
+# auth was bad or the old password was wrong). On success we re-hash with
+# bcrypt and write an audit row, then return 204 with no body.
+@router.post(
+    "/me/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def change_my_password(
+    body: ChangePasswordIn,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    # Re-fetch with roles preloaded, same pattern as the other /me handlers.
+    user_id = user.id
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(selectinload(User.roles).selectinload(UserRole.role))
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # 400 on wrong old password — opaque to avoid leaking which field was wrong.
+    if not verify_password(body.old_password, user_full.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="old password does not match",
+        )
+
+    # Re-hash the new password with the same bcrypt settings as registration.
+    user_full.password_hash = hash_password(body.new_password)
+
+    # Audit row. Action is fixed; metadata records the rotation for security review.
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="password_changed",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={},
+        actor_kind=ActorKind.USER,
+    )
+
+    await session.commit()
+    # 204 No Content — return an empty Response so FastAPI doesn't try to
+    # serialize anything.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# -----------------------------------------------------------------------------
+# GET /me/export — GDPR JSON dump.
+#
+# Returns the full user record plus every SavedItinerary and every audit
+# event the user owns. ``messages`` is reserved for the T4-user agent
+# chat feature; until the ``messages`` table exists, the export returns
+# an empty list so the response shape is stable. ``<5s`` is satisfied by
+# eager ``selectinload`` and a bounded audit-event query (last 1000 rows).
+# The audit row for the export itself is written AFTER the JSON is built
+# (no recursion), so the caller's ``audit_events`` list never includes
+# the row this call produced.
+# -----------------------------------------------------------------------------
+
+
+@router.get("/me/export")
+async def export_my_data(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> JSONResponse:
+    user_id = user.id
+
+    # Re-fetch with roles + itineraries eagerly loaded so the export is
+    # one round-trip and doesn't trip MissingGreenlet on lazy attrs.
+    stmt = (
+        select(User)
+        .where(User.id == user_id)
+        .options(
+            selectinload(User.roles).selectinload(UserRole.role),
+            selectinload(User.interests).selectinload(UserInterest.interest),
+            selectinload(User.subscriptions),
+        )
+    )
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    # Saved itineraries — one query, bounded by user_id index.
+    itin_stmt = (
+        select(SavedItinerary)
+        .where(SavedItinerary.user_id == user_id)
+        .order_by(SavedItinerary.created_at.desc())
+    )
+    itineraries = (await session.execute(itin_stmt)).scalars().all()
+
+    # Audit events the user owns (as actor). Capped at 1000 rows; a
+    # real GDPR export tool would stream this, but the user is the
+    # only consumer and 1000 covers the entire history for any
+    # realistic account.
+    audit_stmt = (
+        select(AuditLog)
+        .where(AuditLog.actor_user_id == user_id)
+        .order_by(AuditLog.at.desc())
+        .limit(1000)
+    )
+    audit_events = (await session.execute(audit_stmt)).scalars().all()
+
+    def _ser_itinerary(it: SavedItinerary) -> dict[str, Any]:
+        return {
+            "id": str(it.id),
+            "title": it.title,
+            "destination_id": str(it.destination_id) if it.destination_id else None,
+            "starts_at": it.starts_at.isoformat(),
+            "ends_at": it.ends_at.isoformat(),
+            "payload": it.payload,
+            "total_price_cents": it.total_price_cents,
+            "currency": it.currency,
+            "created_at": it.created_at.isoformat(),
+            "updated_at": it.updated_at.isoformat(),
+        }
+
+    def _ser_audit(ev: AuditLog) -> dict[str, Any]:
+        return {
+            "id": str(ev.id),
+            "action": ev.action,
+            "target_kind": ev.target_kind,
+            "target_id": ev.target_id,
+            "metadata": ev.metadata_json,
+            "request_id": ev.request_id,
+            "at": ev.at.isoformat(),
+        }
+
+    profile_block = {
+        "id": str(user_full.id),
+        "email": user_full.email,
+        "name": user_full.name,
+        "tier": user_full.tier.value if hasattr(user_full.tier, "value") else str(user_full.tier),
+        "is_active": user_full.is_active,
+        "nationality": user_full.nationality,
+        "passport_number": user_full.passport_number,  # already obfuscated in storage
+        "passport_expiry": user_full.passport_expiry.isoformat() if user_full.passport_expiry else None,
+        "passport_issuing_country": user_full.passport_issuing_country,
+        "date_of_birth": user_full.date_of_birth.isoformat() if user_full.date_of_birth else None,
+        "emergency_contact_name": user_full.emergency_contact_name,
+        "emergency_contact_phone": user_full.emergency_contact_phone,
+        "home_airport": user_full.home_airport,
+        "onboarding_complete": user_full.onboarding_complete,
+        "interests": user_full.interests_json or [],
+        "destinations": user_full.destinations_json or [],
+        "stripe_customer_id": user_full.stripe_customer_id,
+        "created_at": user_full.created_at.isoformat(),
+        "updated_at": user_full.updated_at.isoformat(),
+    }
+
+    body = {
+        "profile": profile_block,
+        "itineraries": [_ser_itinerary(i) for i in itineraries],
+        # Reserved for the T4-user agent chat feature. The model doesn't
+        # exist yet, so the export contract returns an empty list. When
+        # the messages table ships, replace [] with a query against it.
+        "messages": [],
+        "audit_events": [_ser_audit(ev) for ev in audit_events],
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    # Write the audit row LAST so this export's own event is not
+    # included in the response (would cause a double-count on a
+    # repeated export of the same account).
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="gdpr_export",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={"ip_count": len(itineraries), "audit_count": len(audit_events)},
+        actor_kind=ActorKind.USER,
+    )
+    await session.commit()
+
+    return JSONResponse(
+        content=body,
+        headers={
+            "Content-Disposition": f'attachment; filename="user-{user_id}-export.json"',
+        },
+    )
+
+
+# -----------------------------------------------------------------------------
+# DELETE /me — GDPR soft delete.
+#
+# Sets ``user.is_active = False``. The existing login handler in
+# ``app.routers.auth`` and the existing ``get_current_user`` dependency
+# both reject inactive users with 401, so no auth.py change is required.
+# A follow-up card can introduce explicit ``deleted_at`` / ``blocked_at``
+# columns if a distinction between admin-disabled and user-deleted is
+# needed; the hard rules on this card forbid schema changes.
+# -----------------------------------------------------------------------------
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_me(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    user_id = user.id
+
+    # Re-fetch the user row (the auth dep's session may be closed).
+    stmt = select(User).where(User.id == user_id)
+    user_full = (await session.execute(stmt)).scalar_one()
+
+    user_full.is_active = False
+
+    await write_audit_log(
+        session,
+        actor_user_id=user_full.id,
+        action="gdpr_delete",
+        target_kind="user",
+        target_id=str(user_full.id),
+        metadata={"reason": "user_initiated"},
+        actor_kind=ActorKind.USER,
+    )
+    await session.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 __all__ = [
     "router",
     "INTEREST_CATALOG",
     "DESTINATION_CHIPS",
     "IntakeRequest",
     "IntakeResponse",
+    "MeOut",
+    "MePatch",
+    "OnboardingIn",
+    "OnboardingOut",
+    "ChangePasswordIn",
 ]

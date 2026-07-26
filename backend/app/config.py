@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     ticketmaster_api_key: str = ""
     jolpica_api_key: str = ""
 
+    # --- Media (file attachments for chat messages, 2026-07-24) ---
+    # Where MessageAttachment payloads land on disk. Created at startup
+    # if missing. Per-tenant subdirectories are appended by the upload
+    # route; the route also enforces the per-file size cap below.
+    media_root: str = "/var/lib/travel-scout/media"
+    media_max_bytes: int = 10 * 1024 * 1024  # 10 MB per attachment
+
     # --- Tailscale admin gate ---
     admin_allowed_cidrs: str = "100.64.0.0/10"
 
