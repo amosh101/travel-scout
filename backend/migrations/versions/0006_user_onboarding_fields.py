@@ -45,7 +45,10 @@ def upgrade() -> None:
             "onboarding_complete",
             sa.Boolean,
             nullable=False,
-            server_default=sa.text("0"),
+            # Boolean default; sa.true() renders 'true' on Postgres
+            # and '1' on SQLite. Earlier "0" integer default crashed
+            # Postgres on boolean mismatch.
+            server_default=sa.true(),
         ),
     )
     op.add_column(
