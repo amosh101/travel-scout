@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
+import { GlassCard, GlassPill } from "@/components/glass";
+import { useBackground } from "@/lib/background-store";
+import { pickDefaultBackground } from "@/lib/backgrounds";
 
 type Interest = { key: string; name: string };
 
@@ -23,6 +26,7 @@ type City = {
 export default function HomePage() {
   const router = useRouter();
   const { token, ready } = useAuth();
+  const bgInitialized = useRef(false);
   const [interests, setInterests] = useState<Interest[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [originQuery, setOriginQuery] = useState("Maputo");
@@ -47,6 +51,25 @@ export default function HomePage() {
   const [dateTo, setDateTo] = useState(monthFromNow);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Pick a default ambient background on mount only, NOT on every
+  // render. Calling setBg() during render would cause re-renders that
+  // cascade into "Maximum update depth exceeded". `claim()` tells
+  // PageShell not to clobber our pick with the pathname default.
+  useEffect(() => {
+    if (bgInitialized.current) return;
+    bgInitialized.current = true;
+    const picked = pickDefaultBackground();
+    const state = useBackground.getState();
+    state.set({
+      theme: picked.theme,
+      variant: picked.variant,
+      src: picked.src,
+      palette: picked.palette,
+      intensity: "vivid",
+      override: true,
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,40 +202,38 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
+    <main className="min-h-screen text-white">
       {/* Top-right sign-in / open-my-trips button (auth-aware) */}
-      {ready && (
-        <div className="absolute right-4 top-4 z-10 sm:right-6 sm:top-6">
+      <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
           {token ? (
             <Link
               href="/itineraries"
-              className="inline-flex items-center rounded-full border border-border bg-card/70 px-4 py-1.5 text-sm font-medium text-foreground shadow-sm backdrop-blur transition hover:bg-card"
+              className="inline-flex items-center rounded-full border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur transition hover:bg-white/20"
             >
               Open my trips
             </Link>
           ) : (
             <Link
               href="/auth/login"
-              className="inline-flex items-center rounded-full border border-border bg-card/70 px-4 py-1.5 text-sm font-medium text-foreground shadow-sm backdrop-blur transition hover:bg-card"
+              className="inline-flex items-center rounded-full border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur transition hover:bg-white/20"
             >
               Sign in
             </Link>
           )}
         </div>
-      )}
-      {/* Hero */}
-      <section className="container max-w-5xl pt-20 pb-12 sm:pt-28">
+
+      <section className="container max-w-5xl pt-16 pb-10 sm:pt-24">
         <div className="flex flex-col items-center text-center">
-          <span className="rounded-full border border-border bg-card/50 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
-            Interest-driven travel planning
-          </span>
-          <h1 className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
+          <GlassPill accent="#fcb864">
+            <span className="text-amber-300">●</span> Interest-driven travel planning
+          </GlassPill>
+          <h1 className="mt-6 text-balance text-5xl font-semibold tracking-tight text-white drop-shadow-lg sm:text-6xl">
             Trips built around{" "}
             <span className="bg-gradient-to-r from-amber-300 to-rose-300 bg-clip-text text-transparent">
               what you love
             </span>
           </h1>
-          <p className="mt-6 max-w-2xl text-balance text-lg text-muted-foreground">
+          <p className="mt-6 max-w-2xl text-balance text-lg text-white/85">
             Tell us what you&rsquo;re into &mdash; F1, jazz, public holidays,
             cycling, food &mdash; and we&rsquo;ll find the real-world dates and
             places where they line up. Real events, real flights, no fake
@@ -221,14 +242,17 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Intake form */}
       <section className="container max-w-3xl pb-20">
         <form
           onSubmit={submit}
-          className="rounded-2xl border border-border bg-card/80 p-6 shadow-xl backdrop-blur sm:p-8"
         >
-          <h2 className="text-xl font-semibold">Where do you start?</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+        <GlassCard
+          accent="#fcb864"
+          variant="strong"
+          className="p-6 sm:p-8"
+        >
+          <h2 className="text-xl font-semibold text-white">Where do you start?</h2>
+          <p className="mt-1 text-sm text-white/70">
             Your home city, airport code (JNB, MPM), or nickname
             (joburg, schiphol). We&rsquo;ll resolve it.
           </p>
@@ -238,11 +262,11 @@ export default function HomePage() {
               value={originQuery}
               onChange={(e) => setOriginQuery(e.target.value)}
               placeholder="Maputo, joburg, MPM, JNB…"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base focus:border-primary focus:outline-none"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2.5 text-base focus:border-primary focus:outline-none"
               required
             />
             {originResolved && (
-              <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="mt-1.5 flex items-center gap-2 text-xs text-white/70">
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">
                   ✓ {originResolved.country_alpha2}
                 </span>
@@ -251,7 +275,7 @@ export default function HomePage() {
                   {originResolved.region ? `, ${originResolved.region}` : ""}
                 </span>
                 {originIata && (
-                  <span className="ml-auto rounded-md border border-border bg-card/60 px-1.5 py-0.5 font-mono text-[10px]">
+                  <span className="ml-auto rounded-md border border-white/20 bg-white/15 px-1.5 py-0.5 font-mono text-[10px]">
                     {originIata}
                   </span>
                 )}
@@ -276,7 +300,7 @@ export default function HomePage() {
                 className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
                   originQuery.toLowerCase() === c.name.toLowerCase()
                     ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background hover:bg-accent"
+                    : "border-white/20 bg-white/10 hover:bg-accent"
                 }`}
               >
                 {c.country_alpha2} {c.name}
@@ -285,14 +309,14 @@ export default function HomePage() {
           </div>
 
           <h2 className="mt-8 text-xl font-semibold">
-            Destinations you like <span className="text-sm font-normal text-muted-foreground">(optional)</span>
+            Destinations you like <span className="text-sm font-normal text-white/70">(optional)</span>
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-white/70">
             Tap any cities you&rsquo;d happily return to. {cities.length} real
             cities in our database. If you don&rsquo;t pick, we&rsquo;ll
             suggest based on your interests.
           </p>
-          <div className="mt-3 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-border bg-background p-2">
+          <div className="mt-3 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-white/20 bg-white/10 p-2">
             {cities.map((c) => {
               const label = `${c.name} (${c.country_alpha2})${c.primary_iata ? ` ✈${c.primary_iata}` : ""}`;
               const active = pickedDestinations.has(c.name);
@@ -306,7 +330,7 @@ export default function HomePage() {
                   className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
                     active
                       ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border hover:bg-accent"
+                      : "border-white/20 hover:bg-accent"
                   }`}
                   title={c.primary_iata ? `Primary airport: ${c.primary_iata}` : "No major airport"}
                 >
@@ -319,7 +343,7 @@ export default function HomePage() {
           <h2 className="mt-8 text-xl font-semibold">
             What are you into? <span className="text-sm font-normal text-rose-300">*</span>
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-white/70">
             At least one. These are how we find your match.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -335,7 +359,7 @@ export default function HomePage() {
                   className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-all ${
                     active
                       ? "border-amber-400/60 bg-amber-400/10 text-amber-200"
-                      : "border-border bg-background hover:border-amber-400/40"
+                      : "border-white/20 bg-white/10 hover:border-amber-400/40"
                   }`}
                 >
                   {i.name}
@@ -349,16 +373,16 @@ export default function HomePage() {
               value={otherInterest}
               onChange={(e) => setOtherInterest(e.target.value)}
               placeholder="Or type your own (e.g. kite surfing)"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
           </div>
 
-          <div className="mt-8 rounded-lg border border-border bg-background/60 p-4">
+          <div className="mt-8 rounded-lg border border-white/20 bg-white/10 p-4">
             <p className="text-sm font-medium">When are you going?</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+            <p className="mt-0.5 text-xs text-white/70">
               We only look at events inside this window.
             </p>
-            <div className="mt-3 inline-flex flex-wrap rounded-lg border border-border bg-card p-0.5 text-xs">
+            <div className="mt-3 inline-flex flex-wrap rounded-lg border border-white/20 bg-white/15 p-0.5 text-xs">
               {(
                 [
                   ["now", "Next 2 weeks"],
@@ -375,7 +399,7 @@ export default function HomePage() {
                   className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
                     when === v
                       ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-white/70 hover:text-white"
                   }`}
                 >
                   {label}
@@ -385,21 +409,21 @@ export default function HomePage() {
             {when === "specific" && (
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-muted-foreground">From</label>
+                  <label className="text-xs text-white/70">From</label>
                   <input
                     type="date"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">To</label>
+                  <label className="text-xs text-white/70">To</label>
                   <input
                     type="date"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                    className="mt-1 w-full rounded-md border border-white/20 bg-white/10 px-2 py-1.5 text-sm"
                   />
                 </div>
               </div>
@@ -415,15 +439,16 @@ export default function HomePage() {
           <button
             type="submit"
             disabled={submitting}
-            className="mt-6 w-full rounded-lg bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-3 text-base font-semibold text-background transition-opacity disabled:opacity-50"
+            className="mt-6 w-full rounded-lg bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-3 text-base font-semibold text-slate-900 transition-opacity disabled:opacity-50"
           >
             {submitting ? "One moment…" : "Find my trips →"}
           </button>
+        </GlassCard>
         </form>
       </section>
 
       {/* Footer note */}
-      <footer className="border-t border-border/50 py-8 text-center text-xs text-muted-foreground">
+      <footer className="border-t border-white/10 py-8 text-center text-xs text-white/60">
         Real data only &middot; {cities.length} cities &middot; {interests.length} interests
         &middot; Jolpica F1 &middot; Nager.Date public holidays
         &middot; OpenStreetMap &middot; OSRM routing

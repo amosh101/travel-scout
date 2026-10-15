@@ -91,6 +91,11 @@ export default function ItinerariesPage() {
   const [err, setErr] = useState<string | null>(null);
   const [savingRank, setSavingRank] = useState<number | null>(null);
   const [saved, setSaved] = useState<Record<number, string>>({});
+  // URL override destination (only set when ?destination= is in the URL).
+  // Lifted out of the loader so render-time copy can branch on it.
+  const urlDestination = sp?.get("destination") ?? null;
+  const urlDateFrom = sp?.get("date_from") ?? null;
+  const urlDateTo = sp?.get("date_to") ?? null;
 
   useEffect(() => {
     // Do NOT gate on token. The user wants to see the results first,
@@ -103,9 +108,6 @@ export default function ItinerariesPage() {
       setLoading(true);
       setErr(null);
       try {
-        const urlDestination = sp?.get("destination") ?? null;
-        const urlDateFrom = sp?.get("date_from") ?? null;
-        const urlDateTo = sp?.get("date_to") ?? null;
         const params = new URLSearchParams();
         if (urlDestination) params.set("destination", urlDestination);
         if (urlDateFrom) params.set("date_from", urlDateFrom);
@@ -210,22 +212,60 @@ export default function ItinerariesPage() {
     <main className="container max-w-5xl space-y-6 py-10">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-semibold">Your trips</h1>
+          {(() => {
+            const browsingNew = !!urlDestination;
+            const hasCity = data?.results?.[0]?.destination;
+            // Three distinct states:
+            //   1) Logged in browsing a specific new city → "Trips to <City>"
+            //   2) Logged in on their home view (no override) → "Your trips"
+            //   3) Anonymous → "Suggested trips" (original copy)
+            // (We render the header once data is loaded; before that show
+            // a neutral title.)
+            const title = !data
+              ? "Itineraries"
+              : token
+                ? browsingNew && hasCity
+                  ? `Trips to ${data.anchors.destination_override ?? hasCity}`
+                  : "Your trips"
+                : "Suggested trips";
+            return <h1 className="text-3xl font-semibold">{title}</h1>;
+          })()}
           {data && (
             <>
               <p className="mt-1 text-sm text-muted-foreground">
-                Based on your interests
-                {data.interests.length > 0 && (
-                  <>
-                    {" "}— {data.interests.map((i) => i.name).join(", ")}
-                  </>
-                )}
-                . {data.flight_status === "kiwi_not_configured" && (
+                {token && data.interests.length > 0
+                  ? <>Based on your interests — {data.interests.map((i) => i.name).join(", ")}.</>
+                  : <>Based on the interests you picked.</>}
+                {data.flight_status === "kiwi_not_configured" && (
                   <span className="ml-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
                     Flight search requires API key (not configured)
                   </span>
                 )}
               </p>
+              {/*
+                Below the intro, show one of three contextual lines:
+                - logged in, browsing new city → "Pick one to shortlist it"
+                - logged in, home view     → "Shortlist by saving"
+                - anonymous                → "Log in to keep these across devices"
+              */}
+              {token && urlDestination ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  New destination — pick one to shortlist it for{" "}
+                  <span className="text-amber-300">
+                    {data.anchors.destination_override ?? urlDestination}
+                  </span>
+                  . Saved trips stay in <em>My saved trips</em> alongside your other shortlists.
+                </p>
+              ) : token ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Save anything that catches your eye — it stays in{" "}
+                  <em>My saved trips</em> across devices.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Log in to see your saved trips and keep these across devices.
+                </p>
+              )}
               {data.active_window && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Showing trips in your{" "}
@@ -239,6 +279,13 @@ export default function ItinerariesPage() {
           )}
         </div>
         <div className="flex gap-2">
+          {/*
+            Visible CTAs depend on state:
+            - logged in: "My saved trips" + "Find another city" (we
+              shouldn't say "Start over" — that's a punishment tone for
+              someone who already has an account)
+            - anonymous: "My saved trips" (or login?) + "Start over"
+          */}
           <Link
             href="/saved"
             className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
@@ -249,7 +296,7 @@ export default function ItinerariesPage() {
             href="/"
             className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
           >
-            Start over
+            {token ? "Find another city" : "Start over"}
           </Link>
         </div>
       </header>
@@ -335,7 +382,7 @@ export default function ItinerariesPage() {
                   )}
                   {saved[r.rank] ? (
                     <span className="rounded-md border border-green-500/40 bg-green-500/10 px-3 py-1.5 text-xs text-green-300">
-                      Saved
+                      Shortlisted
                     </span>
                   ) : (
                     <button
@@ -343,7 +390,11 @@ export default function ItinerariesPage() {
                       disabled={savingRank === r.rank}
                       className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background disabled:opacity-50"
                     >
-                      {savingRank === r.rank ? "Saving…" : "Save this trip"}
+                      {savingRank === r.rank
+                        ? "Shortlisting…"
+                        : token
+                          ? "Shortlist this trip"
+                          : "Save this trip"}
                     </button>
                   )}
                 </div>
@@ -459,32 +510,75 @@ export default function ItinerariesPage() {
         </ul>
       )}
 
-      {/* Sign-up / log-in prompt — shown after results load, only when
-          the user is unauthenticated. We don't redirect on load; we
-          invite them to act AFTER they've seen what we'd find for them. */}
-      {data && data.results.length > 0 && !loading && !token && (
-        <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-          <h2 className="text-lg font-semibold text-amber-300">
-            We found the best options for you
+      {/* Bottom panel: copy depends on auth state + whether they're
+          browsing a new destination. Three states:
+          1. Logged in + browsing new city → "Shortlist looks good? Already saved."
+          2. Logged in + home view         → "Browse another city"
+          3. Anonymous                      → keep the original sign-up pitch (P16 contract) */}
+      {data && data.results.length > 0 && !loading && token && urlDestination && (
+        <div className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+          <h2 className="text-lg font-semibold text-emerald-300">
+            Already shortlisted — keep exploring
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            These {data.results.length} itinerar{data.results.length === 1 ? "y is" : "ies are"} ready
-            to save. Sign up to keep them across devices and unlock
-            personalised matches based on your interests, or log in if
-            you already have an account.
+            Anything you shortlisted for{" "}
+            <span className="text-amber-300">
+              {data.anchors.destination_override ?? urlDestination}
+            </span>{" "}
+            is in <em>My saved trips</em>. Compare it against other cities:
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link
-              href={`/auth/register?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              href="/saved"
               className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background"
             >
-              Sign up — it's free
+              Open my saved trips
             </Link>
             <Link
-              href={`/auth/login?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              href="/"
               className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
             >
-              Log in
+              Find another city
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {data && data.results.length > 0 && !loading && token && !urlDestination && (
+        <div className="mt-6 rounded-xl border border-border bg-card/30 p-5">
+          <p className="text-sm text-muted-foreground">
+            Looking for somewhere new?{" "}
+            <Link href="/" className="text-amber-300 hover:underline">
+              Pick another city
+            </Link>{" "}
+            and I’ll re-rank these for you.
+          </p>
+        </div>
+      )}
+
+      {/* Anonymous: keep the sign-up pitch. P16 contract: data shown first, gate the write. */}
+      {data && data.results.length > 0 && !loading && !token && (
+        <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+          <h2 className="text-lg font-semibold text-amber-300">
+            Keep these {data.results.length === 1 ? "trip" : "trips"}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            You found {data.results.length} ready-made itinerar{data.results.length === 1 ? "y" : "ies"}.
+            Already have an account? Log in to save them. New here? Sign up in
+            seconds — it’s free.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href={`/auth/login?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background"
+            >
+              Log in — save your trips
+            </Link>
+            <Link
+              href={`/auth/register?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
+            >
+              Sign up — it’s free
             </Link>
           </div>
         </div>
