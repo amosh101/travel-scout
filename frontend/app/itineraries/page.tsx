@@ -103,6 +103,18 @@ export default function ItinerariesPage() {
     // If ?destination= is in the URL, use it (anonymous preview path);
     // otherwise the backend falls back to the user's stored profile.
     if (!ready) return;
+    // Regression fix: the backend's anonymous discover branch REQUIRES
+    // ?destination= (it 400s with "anonymous discover requires
+    // ?destination=City"). A visitor with no session AND no destination
+    // used to trigger that guaranteed 400 and this page rendered the raw
+    // error — the "page loads but no itineraries" dead end. That state is
+    // always a broken handoff: show the sign-up panel below instead of
+    // calling an endpoint that cannot succeed.
+    if (!token && !urlDestination) {
+      setLoading(false);
+      setErr("Log in to see itineraries built from your profile — or pick a destination to preview what you'd find.");
+      return;
+    }
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -118,12 +130,24 @@ export default function ItinerariesPage() {
         );
         if (!cancelled) setData(res);
       } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
+        // Session-repair path: 401 means the backend rejected the
+        // session outright; a 400 WITH a local token means the token was
+        // stale/invalid and get_optional_user() silently downgraded the
+        // request to the anonymous branch, which then 400'd on the
+        // missing ?destination= (this was the owner-facing regression).
+        // In both cases: clear the dead token and ask for a re-login.
+        if (e instanceof ApiError && (e.status === 401 || (e.status === 400 && token))) {
           setToken(null);
-          // Should not happen any more (backend uses optional user),
-          // but if the backend ever flips back to required-auth, at
-          // least don't loop the user into a redirect.
-          setErr("Please sign in to see your personalised itineraries.");
+          // Don't loop: effect re-runs with token=null and short-circuits
+          // via the !token && !urlDestination guard above.
+          setErr("Your session expired — log in again to see your itineraries.");
+          return;
+        }
+        if (e instanceof ApiError && e.status === 400) {
+          // Anonymous caller without a usable destination.
+          setErr(
+            "Pick a destination from the home page, or log in to see itineraries built from your profile.",
+          );
           return;
         }
         if (e instanceof ApiError && e.status === 409) {
@@ -330,6 +354,27 @@ export default function ItinerariesPage() {
       {err && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
           {err}
+        </div>
+      )}
+
+      {/* Session-expired / no-session recovery: always give the user an
+          exit from this page. Shown only when there's no session — a
+          signed-in user who sees an error has other things to fix and
+          the bottom panels below still handle their case. */}
+      {err && !token && (
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/auth/login?next=/itineraries"
+            className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background"
+          >
+            Log in
+          </Link>
+          <Link
+            href="/auth/register?next=/itineraries"
+            className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
+          >
+            Sign up — it&apos;s free
+          </Link>
         </div>
       )}
 
