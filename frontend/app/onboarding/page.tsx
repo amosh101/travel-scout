@@ -2,10 +2,25 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
 
 type Interest = { key: string; name: string };
+
+type PreviewResult = {
+  rank: number;
+  score: number;
+  destination: string;
+  destination_country: string | null;
+  start_date: string;
+  end_date: string;
+  duration_days: number;
+  total_distance_km: number;
+  races_in_window: unknown[] | null;
+  interest_events: unknown[] | null;
+  holiday_alerts: { date: string; name: string }[] | null;
+};
 
 function OnboardingInner() {
   const router = useRouter();
@@ -110,6 +125,55 @@ function OnboardingInner() {
     };
   }, [ready, token, intentId, router]);
 
+  // Anonymous preview build (2026-10-21): this page used to show an
+  // eternal "working on it" spinner for anonymous visitors — nothing
+  // was actually running in the background, and the intake contract
+  // has no completion flag (the build only happens after registration
+  // applies the profile). So run the real anonymous
+  // /api/itineraries/discover preview here and show its results while
+  // the visitor decides whether to register.
+  const [preview, setPreview] = useState<PreviewResult[]>([]);
+  const [previewState, setPreviewState] = useState<
+    "loading" | "ready" | "no-dest" | "error"
+  >("loading");
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!intake) return;
+    const dest = intake.destinations[0];
+    if (!dest) {
+      setPreviewState("no-dest");
+      return;
+    }
+    let cancelled = false;
+    setPreviewState("loading");
+    const qs = new URLSearchParams({ destination: dest, top_n: "3" });
+    if (intake.origin) qs.set("origin", intake.origin);
+    if (intake.date_from) qs.set("date_from", intake.date_from);
+    if (intake.date_to) qs.set("date_to", intake.date_to);
+    (async () => {
+      try {
+        const res = await apiFetch<{ results: PreviewResult[] }>(
+          `/api/itineraries/discover?${qs.toString()}`,
+        );
+        if (!cancelled) {
+          setPreview(res.results ?? []);
+          setPreviewState("ready");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setPreviewErr(
+            e instanceof Error ? e.message : "Preview build failed",
+          );
+          setPreviewState("error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [intake]);
+
   const pickedNames = intake
     ? interests
         .filter((i) => intake.interests.includes(i.key))
@@ -169,35 +233,144 @@ function OnboardingInner() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
-      {/* Step 1: working-on-it loading state */}
+      {/* Step 1: the build — honest state machine. loading = the real
+          anonymous discover call is in flight; ready = show its actual
+          results; no-dest = explain what is needed; error = show it and
+          keep the register path (which builds from the saved profile)
+          available below. */}
       <section className="container max-w-4xl pt-16 pb-10">
         <div className="text-center">
-          <div className="mx-auto inline-flex h-12 w-12 animate-spin items-center justify-center rounded-full border-2 border-amber-400/30 border-t-amber-400" />
-          <h1 className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl">
-            Working on your best itineraries
-          </h1>
-          <p className="mt-3 text-muted-foreground">
-            Cross-referencing real events, public holidays, race dates, and
-            venues across your interests.
-          </p>
+          {previewState === "loading" && (
+            <>
+              <div className="mx-auto inline-flex h-12 w-12 animate-spin items-center justify-center rounded-full border-2 border-amber-400/30 border-t-amber-400" />
+              <h1 className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Working on your best itineraries
+              </h1>
+              <p className="mt-3 text-muted-foreground">
+                Cross-referencing real events, public holidays, race dates, and
+                venues across your interests.
+              </p>
+            </>
+          )}
+          {previewState === "ready" && (
+            <>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                Trips matched to {intake?.destinations[0]}
+              </h1>
+              <p className="mt-3 text-muted-foreground">
+                Built from real events, public holidays, race dates, and
+                venues. Register below to keep them across devices.
+              </p>
+            </>
+          )}
+          {previewState === "no-dest" && (
+            <>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                One thing before we build
+              </h1>
+              <p className="mt-3 text-muted-foreground">
+                You didn&apos;t pick a destination, so there is nothing to
+                preview yet. Pick at least one destination on the landing
+                page — or register below and we&apos;ll build from your saved
+                profile.
+              </p>
+            </>
+          )}
+          {previewState === "error" && (
+            <>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                The preview build didn&apos;t finish
+              </h1>
+              <p className="mt-3 text-muted-foreground">
+                {previewErr ?? "Something went wrong building a preview."}{" "}
+                You can still register below — after you sign in we build
+                from your saved profile instead.
+              </p>
+            </>
+          )}
         </div>
 
-        <div className="mt-10 grid gap-4 sm:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="rounded-xl border border-border bg-card/60 p-5"
-            >
-              <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
-              <div className="mt-3 h-3 w-full animate-pulse rounded bg-muted/70" />
-              <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-muted/50" />
-              <div className="mt-4 flex gap-2">
-                <div className="h-5 w-12 animate-pulse rounded-full bg-muted/60" />
-                <div className="h-5 w-16 animate-pulse rounded-full bg-muted/60" />
+        {previewState === "loading" && (
+          <div className="mt-10 grid gap-4 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="rounded-xl border border-border bg-card/60 p-5"
+              >
+                <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+                <div className="mt-3 h-3 w-full animate-pulse rounded bg-muted/70" />
+                <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-muted/50" />
+                <div className="mt-4 flex gap-2">
+                  <div className="h-5 w-12 animate-pulse rounded-full bg-muted/60" />
+                  <div className="h-5 w-16 animate-pulse rounded-full bg-muted/60" />
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+
+        {previewState === "ready" && (
+          <div className="mt-10 space-y-4">
+            {preview.length === 0 ? (
+              <div className="rounded-xl border border-border bg-card p-6 text-center sm:p-8">
+                <p className="text-sm text-muted-foreground">
+                  No trips matched your interests in this window. Try
+                  different interests or dates on the landing page — or
+                  register below and we&apos;ll build from your full profile.
+                </p>
+              </div>
+            ) : (
+              <>
+                <ul className="space-y-3">
+                  {preview.map((r) => {
+                    const evCount =
+                      (r.races_in_window?.length ?? 0) +
+                      (r.interest_events?.length ?? 0);
+                    const holCount = r.holiday_alerts?.length ?? 0;
+                    return (
+                      <li
+                        key={r.rank}
+                        className="rounded-xl border border-border bg-card p-5 sm:p-6"
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <h2 className="text-lg font-semibold">
+                            #{r.rank} {r.destination}
+                            {r.destination_country
+                              ? `, ${r.destination_country}`
+                              : ""}
+                          </h2>
+                          <span className="text-sm font-medium">
+                            {r.score} / 100
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {r.start_date} → {r.end_date} · {r.duration_days}{" "}
+                          days · {Math.round(r.total_distance_km)} km from
+                          origin
+                        </p>
+                        <p className="mt-1 text-sm">
+                          {evCount} event{evCount === 1 ? "" : "s"} ·{" "}
+                          {holCount} public holiday{holCount === 1 ? "" : "s"}{" "}
+                          in your window
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <Link
+                  href={`/itineraries?destination=${encodeURIComponent(
+                    intake?.destinations[0] ?? "",
+                  )}${intake?.date_from ? `&date_from=${intake.date_from}` : ""}${
+                    intake?.date_to ? `&date_to=${intake.date_to}` : ""
+                  }`}
+                  className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+                >
+                  Open your full results →
+                </Link>
+              </>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Step 2: registration form */}
