@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
+import SearchForm from "../components/SearchForm";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -42,6 +43,31 @@ interface SearchResponse {
   missing_data: string[];
 }
 
+/** FastAPI validation errors arrive as an array of {loc, msg} — render
+ * them as readable text instead of "[object Object],[object Object]". */
+function detailText(d: unknown): string {
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((x) => {
+        const o = x as { loc?: (string | number)[]; msg?: string };
+        const field = o?.loc
+          ? o.loc.filter((p) => p !== "body").join(".")
+          : "";
+        return `${field ? `${field}: ` : ""}${o?.msg ?? JSON.stringify(x)}`;
+      })
+      .join("; ");
+  }
+  if (d && typeof d === "object") {
+    const o = d as { msg?: string; loc?: (string | number)[] };
+    if (o.msg) {
+      const field = o.loc ? o.loc.filter((p) => p !== "body").join(".") : "";
+      return `${field ? `${field}: ` : ""}${o.msg}`;
+    }
+  }
+  return JSON.stringify(d);
+}
+
 export default function SearchClient() {
   const params = useSearchParams();
   const router = useRouter();
@@ -52,7 +78,16 @@ export default function SearchClient() {
   const [saving, setSaving] = useState<number | null>(null);
   const [saved, setSaved] = useState<Record<number, string>>({});
 
+  const hasQuery =
+    !!params.get("destination") &&
+    !!params.get("origin") &&
+    params.toString().length > 0;
+
   useEffect(() => {
+    if (!hasQuery) {
+      setLoading(false);
+      return;
+    }
     const url = `${API}/api/search?${params.toString()}`;
     setLoading(true);
     setError(null);
@@ -60,7 +95,7 @@ export default function SearchClient() {
       .then((r) => {
         if (!r.ok) {
           return r.json().then((b) => {
-            throw new Error(b.detail || `HTTP ${r.status}`);
+            throw new Error(detailText(b.detail) || `HTTP ${r.status}`);
           });
         }
         return r.json();
@@ -68,7 +103,20 @@ export default function SearchClient() {
       .then(setData)
       .catch((e) => setError(e.message || "Network error"))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
+
+  if (!hasQuery) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Enter an origin and destination to search real events, races,
+          holidays, and routing data.
+        </p>
+        <SearchForm />
+      </div>
+    );
+  }
 
   if (loading) {
     return (

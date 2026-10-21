@@ -16,10 +16,17 @@ import { useRouter } from "next/navigation";
  */
 export default function SearchForm() {
   const router = useRouter();
+  // Relative defaults: one week out, three-day trip. Hardcoded dates go
+  // stale (the old July 2026 defaults were already in the past).
+  const iso = (n: number) => {
+    const t = new Date(Date.now() + n * 86400000);
+    const p = (x: number) => String(x).padStart(2, "0");
+    return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+  };
   const [origin, setOrigin] = useState("Maputo");
   const [destination, setDestination] = useState("Johannesburg");
-  const [startDate, setStartDate] = useState("2026-07-19");
-  const [endDate, setEndDate] = useState("2026-07-22");
+  const [startDate, setStartDate] = useState(iso(7));
+  const [endDate, setEndDate] = useState(iso(10));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
