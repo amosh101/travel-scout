@@ -750,6 +750,10 @@ async def holidays_for_country(
 ) -> dict[str, Any]:
     """Return public holidays for a country (Nager.Date)."""
     code = country_code.upper()
+    if not re.fullmatch(r"[A-Z]{2}", code):
+        # Bad client input (not an upstream outage) — never report the
+        # downstream service as unavailable for it.
+        raise HTTPException(404, f"unknown country code: {country_code}")
     h = build_holidays_client()
     try:
         holidays = await h.fetch_year(year, code)
