@@ -129,10 +129,16 @@ function OnboardingInner() {
   // eternal "working on it" spinner for anonymous visitors — nothing
   // was actually running in the background, and the intake contract
   // has no completion flag (the build only happens after registration
-  // applies the profile). So run the real anonymous
-  // /api/itineraries/discover preview here and show its results while
-  // the visitor decides whether to register.
+  // applies the profile). Two passes:
+  //   1. destination pass — discover with the picked destination,
+  //      personalised when interests were picked;
+  //   2. interest-anchored pass — events seeded from the real season
+  //      calendar when no destination was picked OR the destination
+  //      pass came back empty. The visitor always sees actual results.
   const [preview, setPreview] = useState<PreviewResult[]>([]);
+  const [previewMode, setPreviewMode] = useState<"dest" | "interest" | null>(
+    null,
+  );
   const [previewState, setPreviewState] = useState<
     "loading" | "ready" | "no-dest" | "error"
   >("loading");
@@ -140,39 +146,73 @@ function OnboardingInner() {
 
   useEffect(() => {
     if (!intake) return;
-    const dest = intake.destinations[0];
-    if (!dest) {
+    const dest = intake.destinations[0] || null;
+    const names: string[] = intake.interests
+      .map((k) => interests.find((i) => i.key === k)?.name)
+      .filter((n): n is string => !!n);
+    if (intake.interest_name) names.push(intake.interest_name);
+    if (!dest && names.length === 0) {
       setPreviewState("no-dest");
       return;
     }
     let cancelled = false;
-    setPreviewState("loading");
-    const qs = new URLSearchParams({ destination: dest, top_n: "3" });
-    if (intake.origin) qs.set("origin", intake.origin);
-    if (intake.date_from) qs.set("date_from", intake.date_from);
-    if (intake.date_to) qs.set("date_to", intake.date_to);
+    const common = new URLSearchParams();
+    if (intake.origin) common.set("origin", intake.origin);
+    if (intake.date_from) common.set("date_from", intake.date_from);
+    if (intake.date_to) common.set("date_to", intake.date_to);
+    const settle = (r: PreviewResult[], mode: "dest" | "interest") => {
+      setPreview(r);
+      setPreviewMode(mode);
+      setPreviewState("ready");
+    };
     (async () => {
-      try {
-        const res = await apiFetch<{ results: PreviewResult[] }>(
-          `/api/itineraries/discover?${qs.toString()}`,
-        );
-        if (!cancelled) {
-          setPreview(res.results ?? []);
-          setPreviewState("ready");
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setPreviewErr(
-            e instanceof Error ? e.message : "Preview build failed",
+      if (dest) {
+        const qs = new URLSearchParams(common);
+        qs.set("destination", dest);
+        qs.set("top_n", "3");
+        if (names.length) qs.set("interests", names.join(","));
+        try {
+          const res = await apiFetch<{ results: PreviewResult[] }>(
+            `/api/itineraries/discover?${qs.toString()}`,
           );
-          setPreviewState("error");
+          if (cancelled) return;
+          if ((res.results ?? []).length > 0) {
+            settle(res.results ?? [], "dest");
+            return;
+          }
+        } catch {
+          // fall through to the interest-anchored pass
         }
+      }
+      if (names.length > 0) {
+        const qs = new URLSearchParams(common);
+        qs.set("interests", names.join(","));
+        qs.set("top_n", "3");
+        try {
+          const res = await apiFetch<{ results: PreviewResult[] }>(
+            `/api/itineraries/discover?${qs.toString()}`,
+          );
+          if (!cancelled) settle(res.results ?? [], "interest");
+        } catch (e) {
+          if (!cancelled) {
+            setPreviewErr(
+              e instanceof Error ? e.message : "Preview build failed",
+            );
+            setPreviewState("error");
+          }
+        }
+        return;
+      }
+      if (!cancelled) {
+        setPreview([]);
+        setPreviewMode("dest");
+        setPreviewState("ready");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [intake]);
+  }, [intake, interests]);
 
   const pickedNames = intake
     ? interests
@@ -255,11 +295,14 @@ function OnboardingInner() {
           {previewState === "ready" && (
             <>
               <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-                Trips matched to {intake?.destinations[0]}
+                {previewMode === "interest"
+                  ? "Trips built around your interests"
+                  : `Trips matched to ${intake?.destinations[0] ?? ""}`}
               </h1>
               <p className="mt-3 text-muted-foreground">
-                Built from real events, public holidays, race dates, and
-                venues. Register below to keep them across devices.
+                {previewMode === "interest"
+                  ? "Anchored on real event dates in your window. Register below to keep them across devices."
+                  : "Built from real events, public holidays, race dates, and venues. Register below to keep them across devices."}
               </p>
             </>
           )}
@@ -345,8 +388,10 @@ function OnboardingInner() {
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {r.start_date} → {r.end_date} · {r.duration_days}{" "}
-                          days · {Math.round(r.total_distance_km)} km from
-                          origin
+                          days
+                          {r.total_distance_km > 0
+                            ? ` · ${Math.round(r.total_distance_km)} km from origin`
+                            : ""}
                         </p>
                         <p className="mt-1 text-sm">
                           {evCount} event{evCount === 1 ? "" : "s"} ·{" "}
@@ -357,16 +402,24 @@ function OnboardingInner() {
                     );
                   })}
                 </ul>
-                <Link
-                  href={`/itineraries?destination=${encodeURIComponent(
-                    intake?.destinations[0] ?? "",
-                  )}${intake?.date_from ? `&date_from=${intake.date_from}` : ""}${
-                    intake?.date_to ? `&date_to=${intake.date_to}` : ""
-                  }`}
-                  className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-                >
-                  Open your full results →
-                </Link>
+                {previewMode === "dest" && (
+                  <Link
+                    href={`/itineraries?destination=${encodeURIComponent(
+                      intake?.destinations[0] ?? "",
+                    )}${intake?.date_from ? `&date_from=${intake.date_from}` : ""}${
+                      intake?.date_to ? `&date_to=${intake.date_to}` : ""
+                    }`}
+                    className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+                  >
+                    Open your full results →
+                  </Link>
+                )}
+                {previewMode === "interest" && (
+                  <p className="text-sm text-muted-foreground">
+                    Full itineraries open after you register — your profile
+                    then drives the search.
+                  </p>
+                )}
               </>
             )}
           </div>
