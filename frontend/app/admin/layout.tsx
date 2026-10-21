@@ -6,27 +6,42 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
 
-type NavItem = { href: string; label: string };
-
-const NAV: NavItem[] = [
-  { href: "/admin", label: "Overview" },
-  { href: "/admin/users", label: "Users" },
-  { href: "/admin/weights", label: "Algo weights" },
-  { href: "/admin/sources", label: "Sources" },
-  { href: "/admin/audit", label: "Audit log" },
-  { href: "/admin/queue", label: "Agent queue" },
-];
+type Me = {
+  name: string;
+  email: string;
+  tier: string;
+  permissions: string[];
+};
 
 /**
- * Admin layout. JWT + role check happens here:
- *   - No token  → push to /auth/login
- *   - Token but /api/admin/users returns 403 → show "Access denied"
- *   - Otherwise → render children
+ * Admin layout. JWT + permission check happens here, verified against
+ * /api/auth/me — the REAL identity and permission list, not a guessed
+ * row from the users list:
+ *   - No token            -> push to /auth/login
+ *   - 401 (stale token)   -> push to /auth/login
+ *   - No admin/agent perm -> "Access denied" screen
+ *   - Otherwise           -> children behind a permission-filtered sidebar
+ *
+ * Who reaches what (mirrors the backend permission map):
+ *   agent.work | agent.assign -> Overview + Agent queue
+ *   user.read                  -> + Users
+ *   weights.update             -> + Algo weights
+ *   source.admin               -> + Sources
+ *   audit.read                 -> + Audit log
  *
  * The backend independently enforces Tailscale CIDR gating (separate
- * concern) and per-permission guards (per-endpoint). This front-end
- * guard is a UX nicety, not a security boundary.
+ * concern) and per-endpoint guards. This front-end gate is a UX nicety,
+ * not a security boundary.
  */
+const FULL_NAV: { href: string; label: string; perms: string[] }[] = [
+  { href: "/admin", label: "Overview", perms: [] },
+  { href: "/admin/users", label: "Users", perms: ["user.read"] },
+  { href: "/admin/weights", label: "Algo weights", perms: ["weights.update"] },
+  { href: "/admin/sources", label: "Sources", perms: ["source.admin"] },
+  { href: "/admin/audit", label: "Audit log", perms: ["audit.read"] },
+  { href: "/admin/queue", label: "Agent queue", perms: ["agent.work", "agent.assign"] },
+];
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -34,9 +49,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const [verified, setVerified] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [me, setMe] = useState<{ email: string; name: string; roles: string[] } | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
 
-  // Auth + permission gate
+  // Auth + permission gate — one real call to /api/auth/me.
   useEffect(() => {
     if (!ready) return;
     if (!token) {
@@ -46,72 +61,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     let cancelled = false;
     (async () => {
       try {
-        // Use the users list as our "do I have users.read?" probe.
-        // It returns a small payload (limit=1) and exercises the gate.
-        const data = await apiFetch<{
-          items: { id: string; email: string; name: string; roles: string[] }[];
-        }>("/api/admin/users?limit=1");
+        const v = await apiFetch<Me>("/api/auth/me");
         if (cancelled) return;
-        // We don't actually need the items — we just needed a 200.
-        // Fetch our own user record to show the header.
-        if (data.items && data.items.length > 0) {
-          setMe({
-            email: data.items[0].email,
-            name: data.items[0].name,
-            roles: data.items[0].roles,
-          });
-        }
+        const perms = new Set(v.permissions ?? []);
+        const allowed = ["user.read", "agent.work", "agent.assign"].some((p) =>
+          perms.has(p),
+        );
+        setMe(v);
+        setDenied(!allowed);
         setVerified(true);
       } catch (e) {
         if (cancelled) return;
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-          setDenied(true);
-          setVerified(true);
-        } else {
-          // Network / 5xx — show as denied-ish, but allow retry
-          setDenied(true);
-          setVerified(true);
+        if (e instanceof ApiError && e.status === 401) {
+          // Stale token — re-authenticate.
+          setToken(null);
+          router.replace("/auth/login");
+          return;
         }
+        // 5xx / network: treat as denied-ish, user can retry by reload.
+        setDenied(true);
+        setVerified(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [ready, token, router]);
-
-  // Fetch the current admin's own record (we don't have a /me endpoint yet,
-  // so reuse the first item from the probe; this works because the admin
-  // is typically near the top of the list).
-  useEffect(() => {
-    if (!verified || denied) return;
-    // Re-fetch with a higher limit to get the admin's own row.
-    // The bootstrap admin is amos@local.test; the first row in
-    // default sort is usually them. This is good enough for a header
-    // display; a proper /me endpoint is a v2.x follow-up.
-    (async () => {
-      try {
-        const data = await apiFetch<{
-          items: { id: string; email: string; name: string; roles: string[] }[];
-        }>("/api/admin/users?limit=50");
-        // We don't know which row is "us" from the JWT alone (no /me),
-        // so we leave the header user-less unless we already populated it.
-        if (data.items && data.items.length > 0 && !me) {
-          // Pick the row with the most roles — usually the superadmin.
-          const candidate = [...data.items].sort(
-            (a, b) => b.roles.length - a.roles.length
-          )[0];
-          setMe({
-            email: candidate.email,
-            name: candidate.name,
-            roles: candidate.roles,
-          });
-        }
-      } catch {
-        // Non-fatal; the header just shows "Admin"
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verified, denied]);
+  }, [ready, token, router, setToken]);
 
   const signOut = useCallback(() => {
     setToken(null);
@@ -131,8 +106,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="max-w-md rounded-2xl border border-border bg-card p-8 text-center shadow-xl">
           <h1 className="text-2xl font-semibold">Access denied</h1>
           <p className="mt-2 text-muted-foreground">
-            You don&apos;t have <code className="rounded bg-muted px-1">users.read</code>{" "}
-            permission, or this panel is only available from the Tailscale network.
+            You don&apos;t have <code className="rounded bg-muted px-1">user.read</code>{" "}
+            or <code className="rounded bg-muted px-1">agent.work</code> permission, or
+            this panel is only available from the Tailscale network.
           </p>
           <button
             onClick={signOut}
@@ -145,13 +121,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
+  const perms = new Set(me?.permissions ?? []);
+  const has = (need: string[]) => need.length === 0 || need.some((p) => perms.has(p));
+  const nav = FULL_NAV.filter((item) => has(item.perms));
+  const roleLabel =
+    perms.has("agent.work") || perms.has("agent.assign")
+      ? perms.has("user.update") || perms.has("weights.update")
+        ? "Agent + admin"
+        : "Booking agent"
+      : "Admin";
+
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="w-60 border-r border-border bg-card p-6">
         <h2 className="text-lg font-semibold">Admin</h2>
         <p className="mt-1 text-xs text-muted-foreground">Travel Scout</p>
         <nav className="mt-6 space-y-1 text-sm">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const active =
               item.href === "/admin"
                 ? pathname === "/admin"
@@ -160,11 +146,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <Link
                 key={item.href}
                 href={item.href}
-                className={`block rounded px-2 py-1.5 transition ${
-                  active
-                    ? "bg-foreground/10 font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
+                className={`block rounded px-2 py-1.5 transition ${active
+                  ? "bg-foreground/10 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
               >
                 {item.label}
               </Link>
@@ -176,9 +161,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <>
               <div className="font-medium text-foreground">{me.name}</div>
               <div className="truncate text-muted-foreground">{me.email}</div>
-              <div className="mt-1 text-muted-foreground">
-                {me.roles.join(", ")}
-              </div>
+              <div className="mt-1 text-muted-foreground">{roleLabel}</div>
             </>
           ) : (
             <div className="text-muted-foreground">Signed in</div>
