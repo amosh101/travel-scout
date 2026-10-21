@@ -291,15 +291,7 @@ export default function SavedPage() {
           >
             Plan a new trip
           </Link>
-          <button
-            onClick={() => {
-              setToken(null);
-              router.push("/");
-            }}
-            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
-          >
-            Sign out
-          </button>
+          {/* Sign out lives in the global AuthNav (PageShell). */}
         </div>
       </div>
 

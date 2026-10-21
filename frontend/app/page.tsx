@@ -203,24 +203,8 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen text-white">
-      {/* Top-right sign-in / open-my-trips button (auth-aware) */}
-      <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
-          {token ? (
-            <Link
-              href="/itineraries"
-              className="inline-flex items-center rounded-full border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur transition hover:bg-white/20"
-            >
-              Open my trips
-            </Link>
-          ) : (
-            <Link
-              href="/auth/login"
-              className="inline-flex items-center rounded-full border border-white/30 bg-white/10 px-4 py-1.5 text-sm font-medium text-white shadow-lg backdrop-blur transition hover:bg-white/20"
-            >
-              Sign in
-            </Link>
-          )}
-        </div>
+      {/* Auth state lives in the global AuthNav (PageShell) — the top-right
+          sign-in/open-my-trips button used to sit here and duplicated it. */}
 
       <section className="container max-w-5xl pt-16 pb-10 sm:pt-24">
         <div className="flex flex-col items-center text-center">

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useBackground } from "@/lib/background-store";
 import { pickBackground, THEME_PALETTE_CSS } from "@/lib/backgrounds";
 import { BackgroundCanvas } from "@/components/background-canvas";
+import { AuthNav } from "@/components/auth-nav";
 
 /**
  * Page shell.
@@ -100,6 +101,7 @@ export function PageShell({ children }: { children: React.ReactNode }) {
       palette={resolvedPalette}
       intensity={intensity ?? "normal"}
     >
+      <AuthNav />
       {children}
     </BackgroundCanvas>
   );
