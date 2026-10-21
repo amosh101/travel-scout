@@ -65,3 +65,20 @@
     font-family: var(--font-sans);
   }
 }
+
+/* -----------------------------------------------------------------
+   Glass-redesign text recovery (2026-10-21).
+   Root layout sets `text-white` on <body> so hero text reads over
+   the photo backdrop. Opaque card surfaces are still white
+   (--card), so any text that only INHERITS body white vanishes —
+   white-on-white on /auth/login, /auth/register, /onboarding, the
+   admin tables and /saved cards. Restore the token contract: light
+   card surfaces carry --card-foreground; elements with their own
+   text-* classes (white hero text, colored pills) still win.
+   NB: `.bg-card/30`, `.bg-card/60` translucent glass variants are
+   separate classes and intentionally keep inherited white text on
+   dark backdrops.
+----------------------------------------------------------------- */
+.bg-card {
+  color: hsl(var(--card-foreground));
+}

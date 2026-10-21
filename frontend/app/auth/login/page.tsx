@@ -82,7 +82,7 @@ function LoginForm() {
             autoComplete="current-password"
           />
         </div>
-        {err && <p className="text-sm text-red-400">{err}</p>}
+        {err && <p className="text-sm text-red-600">{err}</p>}
         <button
           type="submit"
           disabled={busy}
