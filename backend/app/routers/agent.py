@@ -40,12 +40,17 @@ from app.models import (
     ActorKind,
     AuditLog,
     BookingsLog,
+    Message,
+    MessageSenderRole,
     SavedItinerary,
     User,
 )
 from app.routers.auth import get_current_user
 from app.services.authz import require_permission, write_audit_log
 
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
@@ -427,6 +432,52 @@ async def record_outcome(
         actor_kind=ActorKind.AGENT,
     )
     await session.commit()
+
+    # Designed glue (T8e-booking-summary): a CONFIRMED outcome posts a
+    # summary card into the chat thread — the customer sees dates, price,
+    # the reference, and the checklist without the agent retyping it.
+    if body.status == "confirmed" and row.itinerary_id:
+        try:
+            saved = (await session.execute(
+                select(SavedItinerary).where(SavedItinerary.id == row.itinerary_id)
+            )).scalar_one_or_none()
+            owner = (await session.execute(
+                select(User).where(User.id == row.user_id)
+            )).scalar_one_or_none()
+            if saved is not None and owner is not None:
+                from app.routers.messages import build_booking_summary
+                text, meta = build_booking_summary(
+                    booking=row,
+                    saved=saved,
+                    user=owner,
+                    outcome_note=body.note,
+                    amount_cents=row.amount_cents,
+                    currency=row.currency,
+                    external_id=row.external_id,
+                )
+                msg = Message(
+                    itinerary_id=saved.id,
+                    sender_user_id=agent.id,
+                    sender_role=MessageSenderRole.AGENT,
+                    body=text,
+                    is_summary=True,
+                    booking_id=row.id,
+                )
+                session.add(msg)
+                await session.flush()
+                await write_audit_log(
+                    session,
+                    actor_user_id=agent.id,
+                    action="message.post",
+                    target_kind="messages",
+                    target_id=str(msg.id),
+                    metadata={"sender_role": "agent", **meta},
+                    actor_kind=ActorKind.AGENT,
+                )
+                await session.commit()
+        except Exception as e:  # noqa: BLE001
+            # The outcome stands; the summary post is best-effort.
+            logger.warning("booking summary post failed for %s: %s", row.id, e)
 
     return await _row_to_queue_item(session, row)
 

@@ -942,7 +942,14 @@ async def _discover_for_user(
     # explicitly passed ?interest= list (e.g. an intake-built deep link)
     # — stored interests always win when they exist.
     if not interests and interests_param:
-        interests = [i.strip() for i in interests_param.split(",") if i.strip()]
+        # Normalise to the row shape every consumer expects ({key, name}) —
+        # raw strings here used to crash the build ("string indices must
+        # be integers") because callers index into the dicts.
+        interests = [
+            {"key": k.strip(), "name": k.strip()}
+            for k in interests_param.split(",")
+            if k.strip()
+        ]
     # No stored interests is no longer a blocker — the intersection
     # runs with a default interest set (modern-art, football, cycling,
     # jazz, opera, design) that gives broad coverage. The user's

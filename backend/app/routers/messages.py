@@ -57,7 +57,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -80,6 +80,8 @@ from app.schemas.messages import (
     MessageList,
     MessageOut,
     PostMessageIn,
+    ThreadList,
+    ThreadSummary,
 )
 from app.services.authz import write_audit_log
 
@@ -180,18 +182,25 @@ async def _resolve_sender_role_async(
 async def _ensure_itinerary_visible(
     session: AsyncSession, user: User, itinerary_id: UUID
 ) -> SavedItinerary:
-    """Return the itinerary if user can read its thread.
+    """Return the itinerary if user can READ its thread.
 
     Rules:
       - User can read if they own the itinerary.
       - Agent can read if they have agent.work (any itinerary).
+      - Admin can read if they hold itinerary.read_all or agent.assign
+        (supervisory read; the WRITE gate below still requires
+        concierge tier or agent.work).
     Raises 404 if not found / not visible.
     """
     from app.services.authz import user_has_permission
-    is_agent = await user_has_permission(session, user.id, "agent.work")
+    can_all = (
+        await user_has_permission(session, user.id, "agent.work")
+        or await user_has_permission(session, user.id, "agent.assign")
+        or await user_has_permission(session, user.id, "itinerary.read_all")
+    )
 
     stmt = select(SavedItinerary).where(SavedItinerary.id == itinerary_id)
-    if not is_agent:
+    if not can_all:
         stmt = stmt.where(SavedItinerary.user_id == user.id)
     saved = (await session.execute(stmt)).scalar_one_or_none()
     if saved is None:
@@ -375,6 +384,100 @@ async def list_messages(
         for r in rows
     ]
     return MessageList(itinerary_id=itinerary_id, total=len(items), items=items)
+
+
+# -- GET /api/messages/threads ------------------------------------------------
+
+
+@router.get("/threads", response_model=ThreadList)
+async def list_threads(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_current_user)],
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Chat-thread index for the agent/admin inbox (most recent first).
+
+    Read gate: ``agent.work`` | ``agent.assign`` | ``itinerary.read_all``.
+    This endpoint changes nothing about posting rights: a supervisory
+    admin (itinerary.read_all, no concierge tier and no agent.work) can
+    read any thread here but the POST route still refuses them.
+    """
+    from app.services.authz import user_has_permission
+    can_read = (
+        await user_has_permission(session, user.id, "agent.work")
+        or await user_has_permission(session, user.id, "agent.assign")
+        or await user_has_permission(session, user.id, "itinerary.read_all")
+    )
+    if not can_read:
+        raise HTTPException(
+            status_code=403,
+            detail="requires an agent or supervisory permission",
+        )
+
+    counts = (await session.execute(
+        select(
+            Message.itinerary_id,
+            func.count().label("n"),
+            func.min(Message.created_at),
+            func.max(Message.created_at),
+        ).group_by(Message.itinerary_id)
+    )).all()
+    if not counts:
+        return ThreadList(total=0, items=[])
+
+    ids = [c[0] for c in counts]
+
+    # Last message per thread (DISTINCT ON, Postgres).
+    last_by_itin: dict = {}
+    for m in (await session.execute(
+        select(Message)
+        .distinct(Message.itinerary_id)
+        .where(Message.itinerary_id.in_(ids))
+        .order_by(Message.itinerary_id, Message.created_at.desc())
+    )).scalars().all():
+        last_by_itin[m.itinerary_id] = m
+
+    saved_by_id: dict = {}
+    for saved, owner in (await session.execute(
+        select(SavedItinerary, User)
+        .join(User, User.id == SavedItinerary.user_id, isouter=True)
+        .where(SavedItinerary.id.in_(ids))
+    )).all():
+        saved_by_id[saved.id] = (saved, owner)
+
+    queue_status_by_itin: dict = {}
+    for b in (await session.execute(
+        select(BookingsLog)
+        .distinct(BookingsLog.itinerary_id)
+        .where(BookingsLog.itinerary_id.in_(ids))
+        .order_by(BookingsLog.itinerary_id, BookingsLog.created_at.desc())
+    )).scalars().all():
+        queue_status_by_itin[b.itinerary_id] = b.status
+
+    items: list[ThreadSummary] = []
+    for itin_id, n, first_at, last_at in counts:
+        saved, owner = saved_by_id.get(itin_id, (None, None))
+        m = last_by_itin.get(itin_id)
+        items.append(ThreadSummary(
+            itinerary_id=itin_id,
+            itinerary_title=saved.title if saved else None,
+            owner_id=saved.user_id if saved else itin_id,
+            owner_email=owner.email if owner else "",
+            owner_name=owner.name if owner else "",
+            message_count=int(n),
+            first_at=first_at,
+            last_at=m.created_at if m else last_at,
+            last_body=(m.body or "")[:160] if m else None,
+            last_sender_role=m.sender_role.value if m else None,
+            last_is_summary=bool(m.is_summary) if m else False,
+            queue_status=queue_status_by_itin.get(itin_id),
+        ))
+    items.sort(
+        key=lambda x: (x.last_at or x.first_at or datetime.min.replace(tzinfo=timezone.utc)),
+        reverse=True,
+    )
+    return ThreadList(total=len(items), items=items[offset : offset + limit])
 
 
 # -- Attachment upload (multipart) -------------------------------------------

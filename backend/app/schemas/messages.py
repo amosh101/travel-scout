@@ -67,6 +67,30 @@ class MessageList(BaseModel):
     items: list[MessageOut]
 
 
+class ThreadSummary(BaseModel):
+    """One chat thread (per itinerary) for the agent/admin inbox list."""
+
+    itinerary_id: UUID
+    itinerary_title: Optional[str] = None
+    owner_id: UUID
+    owner_email: str
+    owner_name: str
+    message_count: int
+    first_at: Optional[datetime] = None
+    last_at: Optional[datetime] = None
+    last_body: Optional[str] = None
+    last_sender_role: Optional[str] = None
+    last_is_summary: bool = False
+    queue_status: Optional[str] = None  # latest booking hand-off status, if any
+
+
+class ThreadList(BaseModel):
+    """Chat threads, most recently active first."""
+
+    total: int
+    items: list[ThreadSummary]
+
+
 class HandOffBrief(BaseModel):
     """Short hand-off summary used by the agent to start the work.
 
