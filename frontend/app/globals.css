@@ -82,3 +82,15 @@
 .bg-card {
   color: hsl(var(--card-foreground));
 }
+
+/* Typed text must never inherit a colour meant for the photo backdrop.
+   All text fields carry bg-background (white), so pin field text to
+   --foreground directly on the element — input elements also inherit
+   through form-state UA styles in some engines, and an element-level
+   declaration beats any inherited value. Any explicit text-* class on
+   an individual input still wins (class > bare tag specificity). */
+input,
+textarea,
+select {
+  color: hsl(var(--foreground));
+}
