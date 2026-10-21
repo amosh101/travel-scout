@@ -737,6 +737,31 @@ async def _build_itinerary_only(
     return it
 
 
+async def _season_races_for_window(jolpica, date_from: date, date_to: date) -> list:
+    """Jolpica season entries covering the window, year-straddle safe.
+
+    ``fetch_season`` is called per year so a window that crosses a
+    season boundary (e.g. "next 6 months" from October reaches into
+    the following March) still sees the next season's races. Entries
+    are de-duplicated by (city, country, start date).
+    """
+    races: list = []
+    for y in sorted({date_from.year, date_to.year}):
+        try:
+            races.extend(await jolpica.fetch_season(y))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Jolpica season %s fetch failed: %s", y, e)
+    seen: set[tuple] = set()
+    out: list = []
+    for r in races:
+        k = (r.city, r.country, r.starts_at)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
@@ -747,6 +772,18 @@ async def discover(
     session: Annotated[AsyncSession, Depends(get_session)],
     origin: str | None = Query(None, description="Override the user's origin"),
     destination: str | None = Query(None, description="Override candidate destinations"),
+    interests: str | None = Query(
+        None,
+        description=(
+            "Comma-separated interest names for the interest-driven "
+            "anonymous preview. For signed-in users this is honoured "
+            "only when their stored profile has no interests."
+        ),
+    ),
+    interest: str | None = Query(
+        None,
+        description="Singular alias of ``interests`` (single name).",
+    ),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     top_n: int = Query(5, ge=1, le=20),
@@ -757,19 +794,24 @@ async def discover(
 
     - **Signed in:** uses the user's stored interests, intake window,
       and origins. The original behaviour.
-    - **Anonymous:** requires ``?destination=City&date_from=...&date_to=...``
-      in the URL — no profile to fall back to. Used for the "preview
-      before signup" flow on the itineraries page.
+    - **Anonymous:** either ``?destination=City&date_from=...&date_to=...``
+      (destination preview), or ``?interest=Name&...`` for an
+      event-anchored preview built from real events in the window.
+      Used for the "preview before signup" flow.
 
     Both branches return the same shape so the frontend renders results
     identically; only the save buttons differ (auth required for save).
     """
     if user is not None:
         return await _discover_for_user(
-            session, user, origin, destination, date_from, date_to, top_n,
+            session, user, origin, destination,
+            interests_param=interests or interest,
+            date_from=date_from, date_to=date_to, top_n=top_n,
         )
     return await _discover_anonymous(
-        session, origin, destination, date_from, date_to, top_n,
+        session, origin, destination,
+        interests_param=interests or interest,
+        date_from=date_from, date_to=date_to, top_n=top_n,
     )
 
 
@@ -778,12 +820,18 @@ async def _discover_for_user(
     user: User,
     origin: str | None,
     destination: str | None,
+    interests_param: str | None,
     date_from: date | None,
     date_to: date | None,
     top_n: int,
 ) -> dict[str, Any]:
     """Original authenticated flow — uses the user's stored profile."""
     interests = await _load_user_interests(session, user.id)
+    # A signed-in user with an EMPTY stored profile can still honour an
+    # explicitly passed ?interest= list (e.g. an intake-built deep link)
+    # — stored interests always win when they exist.
+    if not interests and interests_param:
+        interests = [i.strip() for i in interests_param.split(",") if i.strip()]
     # No stored interests is no longer a blocker — the intersection
     # runs with a default interest set (modern-art, football, cycling,
     # jazz, opera, design) that gives broad coverage. The user's
@@ -858,13 +906,10 @@ async def _discover_for_user(
                 candidates.append((d.strip(), None))
         # Otherwise seed candidates with every F1 city in the season window.
         # (The landing page is interest-driven; a user who picked F1 gets
-        # the season as the candidate pool.)
+        # the season as the candidate pool.) Year-straddle safe: windows
+        # crossing a season boundary still see the next season's races.
         jolpica = build_jolpica_client()
-        try:
-            season = await jolpica.fetch_season(date_from.year)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Jolpica failed: %s", e)
-            season = []
+        season = await _season_races_for_window(jolpica, date_from, date_to)
         for r in season:
             # Strict window: only F1 races whose start date falls
             # inside the user's profile window are candidate anchors.
@@ -1050,20 +1095,34 @@ async def _discover_anonymous(
     session: AsyncSession,
     origin: str | None,
     destination: str | None,
+    interests_param: str | None,
     date_from: date | None,
     date_to: date | None,
     top_n: int,
 ) -> dict[str, Any]:
-    """Anonymous preview — single-destination, no stored profile.
+    """Anonymous preview — no stored profile.
 
-    Used for the "show me what you'd find, then ask me to sign up" flow.
-    Requires ``destination`` in the URL. Uses the destination as its own
-    origin (no route to compute from an unspecified start city).
+    Two supported shapes, used for the "show me what you'd find, then
+    ask me to sign up" flow:
+
+    - ``?destination=City[&date_from&date_to]`` — single-destination
+      preview. Uses the destination as its own origin (no route to
+      compute from an unspecified start city) and the default interest
+      set (no personalisation).
+    - ``?interest=Name[,Name…][&origin&date_from&date_to]`` —
+      interest-driven preview: candidate destinations are seeded from
+      REAL events in the window (F1 race cities for motorsport
+      interests), and each trip is scored with the passed interests.
+      This is what the onboarding "building…" phase runs when the
+      visitor skipped the destination step.
     """
-    if not destination:
+    interest_names = [
+        i.strip() for i in (interests_param or "").split(",") if i.strip()
+    ]
+    if not destination and not interest_names:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="anonymous discover requires ?destination=City",
+            detail="anonymous discover requires ?destination=City or ?interest=Name",
         )
     today = date.today()
     if date_from is None:
@@ -1076,25 +1135,46 @@ async def _discover_anonymous(
         raise HTTPException(400, "date_to must be >= date_from")
 
     # Origin defaults to the destination itself — no stored origin to pull.
-    effective_origin = (origin or destination).strip()
+    # In the interest-driven mode there is no destination either, so the
+    # app's home city (Maputo) is the honest default, matching the
+    # signed-in branch's fallback.
+    effective_origin = (origin or destination or "Maputo").strip()
     active_window = {
         "from": date_from.isoformat(),
         "to": date_to.isoformat(),
         "when": None,
-        "when_label": "next 6 months (preview)",
+        "when_label": (
+            "interest-driven preview (next 6 months)"
+            if not destination
+            else "next 6 months (preview)"
+        ),
     }
-
-    candidates: list[tuple[str, str | None]] = [(destination.strip(), None)]
 
     nomi = build_nominatim_client()
     osrm = build_osrm_client()
     jolpica = build_jolpica_client()
     holidays_client = build_holidays_client()
     overpass = build_overpass_client()
-    try:
-        season_races = await jolpica.fetch_season(date_from.year)
-    except Exception:
-        season_races = []
+    season_races = await _season_races_for_window(jolpica, date_from, date_to)
+
+    if destination:
+        candidates: list[tuple[str, str | None]] = [(destination.strip(), None)]
+    else:
+        # Interest-driven preview: seed candidates from REAL events in
+        # the window — F1 race cities first (the season list is the
+        # event ledger), so the build phase anchors each trip on the
+        # actual race dates like the signed-in flow does.
+        candidates = []
+        for r in season_races:
+            # Strict window: the race itself must fall inside it.
+            if date_from <= r.starts_at.date() <= date_to:
+                candidates.append((r.city, r.country))
+        if not candidates:
+            raise HTTPException(
+                404,
+                "no event-anchored destinations found in this window — "
+                "pass ?destination=City or set dates that include an event.",
+            )
 
     # Resolve origin via ReferenceService.
     from app.refdata.service import ReferenceService
@@ -1121,11 +1201,13 @@ async def _discover_anonymous(
 
     built: list[Itinerary] = []
     event_windows_by_dest: dict[str, dict] = {}
-    # Anonymous: no stored interests, so the intersection runs without
-    # interest weighting. The user can still see all real events, races,
-    # holidays, and hotels in the trip window — they just don't get the
-    # personalised "matches your F1 interest" pitch. That's honest: we
-    # don't have their interests yet.
+    # Anonymous: no STORED interests — but when the caller passed
+    # ?interest=, personalise the build with those (the pitch says
+    # "matches your interest", which is now true). Without interests we
+    # run the default-set intersection exactly as before: all real
+    # events, races, holidays, and hotels in the trip window, honestly
+    # unpersonalised.
+    personalised = bool(interest_names)
     for cand_name, cand_hint in candidates:
         try:
             it, ew = await _build_itinerary_for(
@@ -1136,14 +1218,14 @@ async def _discover_anonymous(
                 origin_resolution=None,
                 date_from=date_from,
                 date_to=date_to,
-                interests=[],  # anonymous: no personalisation
+                interests=interest_names,  # personalise when provided
                 season_races=season_races,
                 holidays_client=holidays_client,
                 osrm=osrm,
                 nomi=nomi,
                 overpass=overpass,
                 sources_used=sources_used,
-                is_anonymous=True,
+                is_anonymous=not personalised,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Build itinerary for %s failed: %s", cand_name, e)
