@@ -9,12 +9,39 @@ import { useAuth } from "../../../lib/auth-context";
 function RegisterForm() {
   const router = useRouter();
   const sp = useSearchParams();
-  const { setToken } = useAuth();
+  const { token, setToken } = useAuth();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Already signed in: the form is redundant — say so and move on.
+  // (On /auth/* the global AuthNav is hidden, so this page carries its
+  // own affordances.)
+  if (token) {
+    return (
+      <div className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-6">
+        <h1 className="text-2xl font-semibold">Already signed in</h1>
+        <p className="text-sm text-muted-foreground">
+          You have an active session. Head to your trips, or sign out below.
+        </p>
+        <Link
+          href="/saved"
+          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground text-center"
+        >
+          Open my saved trips
+        </Link>
+        <button
+          type="button"
+          onClick={() => setToken(null)}
+          className="w-full rounded-md border border-border px-4 py-2 text-sm font-medium"
+        >
+          Sign out
+        </button>
+      </div>
+    );
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
