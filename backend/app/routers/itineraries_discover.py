@@ -51,6 +51,20 @@ from app.services.audit import AuditService
 
 logger = logging.getLogger(__name__)
 
+# Catalog interest keys that mark a motorsport trip (race anchoring).
+_F1_KEYS = {
+    "f1", "motorsport", "formula 1", "formula-1", "formula one", "racing",
+}
+
+
+def _fold(s: str) -> str:
+    """Case + accent fold for place matching ('São Paulo' == 'Sao Paulo')."""
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", (s or "")).casefold()
+        if not unicodedata.combining(c)
+    )
+
 router = APIRouter(prefix="/itineraries", tags=["itineraries-discover"])
 
 
@@ -183,6 +197,17 @@ async def _build_itinerary_for(
     """
     from app.refdata.service import ReferenceService
     ref = ReferenceService(session)
+
+    # ------------------------------------------------------------------
+    # T9x STRICT INTEREST LIMITING: F1 races anchor a trip only when the
+    # caller selected a motorsport interest; non-anchor interest events
+    # below are restricted to the selected set (deep press/social harvest
+    # included). Computed once here — the race gating and the anchor
+    # decision both read these.
+    # ------------------------------------------------------------------
+    f1_kw = _F1_KEYS
+    interests_norm = {i.strip().lower() for i in interests if i}
+    is_f1_trip = bool(interests_norm & f1_kw)
 
     # 1. Try ReferenceService first
     res = await ref.resolve(candidate_name, country_bias=candidate_country_hint)
@@ -324,17 +349,21 @@ async def _build_itinerary_for(
 
     # F1 races at this destination (within the user's profile window).
     # The first one will be the anchor for the event window (T8a).
+    # STRICT INTEREST LIMITING: only when the user actually selected a
+    # motorsport interest — a jazz or food customer must not inherit
+    # race anchors.
     races_at: list[dict] = []
     # T8d: per-suggestion booking link.
     race_url = "https://www.formula1.com/en/racing/2026"
-    for r in season_races:
-        race_cc = _COUNTRY_NAME_TO_CODE.get(r.country.upper(), "")
-        if race_cc and d_country and race_cc == d_country:
-            # Strict window — the race must start inside the user's
-            # profile window. The per-event window (T8a: race ± 2 days)
-            # is applied downstream to size the trip, not here.
-            if date_from <= r.starts_at.date() <= date_to:
-                races_at.append({
+    if is_f1_trip:
+        for r in season_races:
+            race_cc = _COUNTRY_NAME_TO_CODE.get(r.country.upper(), "")
+            if race_cc and d_country and race_cc == d_country:
+                # Strict window — the race must start inside the user's
+                # profile window. The per-event window (T8a: race ± 2 days)
+                # is applied downstream to size the trip, not here.
+                if date_from <= r.starts_at.date() <= date_to:
+                    races_at.append({
                     "name": r.name,
                     "circuit": r.circuit,
                     "city": r.city,
@@ -479,12 +508,9 @@ async def _build_itinerary_for(
         )
         return None, None
 
-    # If we have an event window, use it as the itinerary dates.
-    # an F1-related interest, an F1 race at this destination is the
-    # anchor.
-    f1_kw = {"f1", "f1 / motorsport", "motorsport", "formula 1", "racing"}
-    interests_norm = {i.strip().lower() for i in interests if i}
-    is_f1_trip = bool(interests_norm & f1_kw)
+    # (f1_kw / interests_norm / is_f1_trip are computed at the top of
+    # this function — the race gating above and the anchor decisions
+    # below both read them.)
 
     # Default interest set for anonymous / unset interest queries.
     # The free-events aggregator (Wikidata + Wikipedia) returns good
@@ -632,6 +658,90 @@ async def _build_itinerary_for(
         if per_interest and "free_events" not in sources_used:
             sources_used.append("free_events")
 
+    # ------------------------------------------------------------------
+    # Deep-source harvest — magazines, blogs, newspapers, social feeds
+    # (app/clients/interest_feeds.py; every source probe-verified live
+    # before wiring). STRICTLY limited to the selected interests: a feed
+    # only fires when its vertical maps to one of the caller's interest
+    # keys, the item text must mention the trip's city/country, and a
+    # parseable event date inside the window is required (a publish
+    # date is never used as an event date).
+    # ------------------------------------------------------------------
+    notes: list[str] = []
+    if non_anchor_interests:
+        from app.clients.interest_feeds import search_for_trip as _deep_search
+        try:
+            deep_events, deep_notes = await _deep_search(
+                non_anchor_interests,
+                city=d_name,
+                country=d_country_name,
+                start_date=date_from,
+                end_date=date_to,
+                limit_per_interest=4,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("interest_feeds failed: %s", e)
+            deep_events, deep_notes = [], [f"interest_feeds: {type(e).__name__}"]
+        anchor_events.extend(deep_events)
+        if deep_events and "interest_feeds" not in sources_used:
+            sources_used.append("interest_feeds")
+        notes.extend(deep_notes)
+
+    # ------------------------------------------------------------------
+    # STRICT TRIP RELEVANCE (one pass over all sources):
+    # - race anchors (city = circuit town, country-vetted upstream) and
+    #   country-level public holidays pass as context;
+    # - interest events must carry a REAL date and belong to the
+    #   candidate city (accent-folded containment) — Wikipedia's
+    #   country-level lists otherwise attach "Ann Arbor" festivals to
+    #   an Austin trip. Undated / other-city items are skipped and
+    #   counted in the honest notes.
+    # ------------------------------------------------------------------
+    _folded_dest = _fold(d_name)
+    _final: list[dict] = []
+    _skipped_undated = 0
+    _skipped_city = 0
+    for e in anchor_events:
+        if e.get("kind") in ("f1_race", "public_holiday"):
+            _final.append(e)
+            continue
+        if not e.get("date"):
+            _skipped_undated += 1
+            continue
+        ev_city = _fold(str(e.get("city") or ""))
+        if ev_city and (
+            ev_city not in _folded_dest and _folded_dest not in ev_city
+        ):
+            _skipped_city += 1
+            continue
+        _final.append(e)
+    anchor_events = _final
+    if _skipped_undated or _skipped_city:
+        notes.append(
+            f"relevance: skipped {_skipped_undated} undated and "
+            f"{_skipped_city} other-city event(s) while building {d_name}"
+        )
+
+    # Deterministic dedupe + ordering (replicable results): the same
+    # interest set + window yields the same events in the same order —
+    # Wikidata/Wikipedia, race anchors, holidays, then press/social
+    # harvest, folded by (title, date, city), sorted by (date, title).
+    _seen_ev: set[tuple[str, str, str]] = set()
+    _kept_ev: list[dict] = []
+    for e in anchor_events:
+        k = (
+            str(e.get("title", ""))[:80].lower(),
+            e.get("date") or "",
+            str(e.get("city", "")).lower(),
+        )
+        if k in _seen_ev:
+            continue
+        _seen_ev.add(k)
+        _kept_ev.append(e)
+    anchor_events = sorted(
+        _kept_ev, key=lambda e: (e.get("date") or "", str(e.get("title", "")))
+    )
+
     # Hotels via OpenStreetMap Overpass. Free, no key, real data.
     # 5km radius for downtown. Failures return [] and the result
     # simply omits the section — never fabricated. We do NOT retry
@@ -720,8 +830,9 @@ async def _build_itinerary_for(
             # context ("this is a long-haul trip") but no longer imply
             # driving is the suggested transport.
         } if route else None,
-        sources=list(set(sources_used)),
-        missing=[],
+        sources=sorted(set(sources_used)),
+        # Honest coverage notes (deep-source skips, feed failures).
+        missing=notes,
         # event_window and per-suggestion links are added by the route
         # handler in the rich envelope below (the dataclass is shared
         # with the search router).
@@ -970,9 +1081,9 @@ async def _discover_for_user(
 
     built: list[Itinerary] = []
     event_windows_by_dest: dict[str, dict] = {}  # T8a: keyed by destination name
-    for cand_name, cand_hint in candidates:
+    async def _build_one(cand_name: str, cand_hint: str | None):
         try:
-            it, ew = await _build_itinerary_for(
+            return await _build_itinerary_for(
                 session,
                 candidate_name=cand_name,
                 candidate_country_hint=cand_hint,
@@ -990,7 +1101,12 @@ async def _discover_for_user(
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Build itinerary for %s failed: %s", cand_name, e)
-            continue
+            return (None, None)
+
+    # Parallel build (cold-cache preview latency): candidates share no
+    # state that breaks under gather; order is preserved (deterministic).
+    _built = await asyncio.gather(*(_build_one(n, h) for n, h in candidates))
+    for it, ew in _built:
         if it is None:
             continue
         built.append(it)
@@ -1161,20 +1277,81 @@ async def _discover_anonymous(
         candidates: list[tuple[str, str | None]] = [(destination.strip(), None)]
     else:
         # Interest-driven preview: seed candidates from REAL events in
-        # the window — F1 race cities first (the season list is the
-        # event ledger), so the build phase anchors each trip on the
-        # actual race dates like the signed-in flow does.
+        # the window. F1 race cities first (the season list is the
+        # event ledger), then — for the non-motorsport interests —
+        # event cities discovered worldwide by the free sources,
+        # so a jazz or food customer gets candidates anchored on
+        # actual events, not only F1 circuits.
         candidates = []
-        for r in season_races:
-            # Strict window: the race itself must fall inside it.
-            if date_from <= r.starts_at.date() <= date_to:
-                candidates.append((r.city, r.country))
+        # STRICT INTEREST LIMITING on candidates too: race cities only
+        # seed the pool when a motorsport interest was actually selected.
+        if any(i.strip().lower() in _F1_KEYS for i in interest_names):
+            for r in season_races:
+                # Strict window: the race itself must fall inside it.
+                if date_from <= r.starts_at.date() <= date_to:
+                    candidates.append((r.city, r.country))
+        non_f1 = [
+            i for i in interest_names if i.strip().lower() not in _F1_KEYS
+        ]
+        if non_f1:
+            from app.clients.free_events import (
+                build_free_event_aggregator as _agg,
+            )
+            _agg_c = _agg()
+            _sem_seed = asyncio.Semaphore(2)
+
+            async def _seed(interest: str) -> list:
+                try:
+                    async with _sem_seed:
+                        return await asyncio.wait_for(
+                            _agg_c.search(
+                                interest_key=interest,
+                                start_date=date_from,
+                                end_date=date_to,
+                                limit=12,
+                            ),
+                            timeout=6.0,
+                        )
+                except Exception:  # noqa: BLE001
+                    return []
+
+            _seed_batches = await asyncio.gather(*(_seed(k) for k in non_f1[:4]))
+            _slot = max(0, 4 - len(candidates))
+            for _b in _seed_batches:
+                for e in _b:
+                    if _slot <= 0:
+                        break
+                    _city = (getattr(e, "city", "") or "").strip()
+                    _sd = getattr(e, "starts_at", None)
+                    if _sd is not None:
+                        if hasattr(_sd, "date") and not isinstance(_sd, date):
+                            _sd = _sd.date()
+                    if _city and _sd and date_from <= _sd <= date_to:
+                        candidates.append(
+                            (_city, getattr(e, "country", "") or None)
+                        )
+                        _slot -= 1
+                if _slot <= 0:
+                    break
         if not candidates:
             raise HTTPException(
                 404,
                 "no event-anchored destinations found in this window — "
-                "pass ?destination=City or set dates that include an event.",
+                "pass ?destination=City, set dates that include an event, "
+                "or pick an interest our sources cover.",
             )
+
+    # De-duplicate + cap the candidate pool (same contract as the
+    # signed-in branch) so the build phase never fans out unbounded.
+    _seen_c: set[str] = set()
+    _deduped: list[tuple[str, str | None]] = []
+    for _name, _hint in candidates:
+        _k = _name.lower()
+        if _k in _seen_c:
+            continue
+        _seen_c.add(_k)
+        _deduped.append((_name, _hint))
+    candidates = _deduped[: max(top_n, 3) * 2]
 
     # Resolve origin via ReferenceService.
     from app.refdata.service import ReferenceService
@@ -1208,9 +1385,9 @@ async def _discover_anonymous(
     # events, races, holidays, and hotels in the trip window, honestly
     # unpersonalised.
     personalised = bool(interest_names)
-    for cand_name, cand_hint in candidates:
+    async def _build_one_anon(cand_name: str, cand_hint: str | None):
         try:
-            it, ew = await _build_itinerary_for(
+            return await _build_itinerary_for(
                 session,
                 candidate_name=cand_name,
                 candidate_country_hint=cand_hint,
@@ -1229,7 +1406,11 @@ async def _discover_anonymous(
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Build itinerary for %s failed: %s", cand_name, e)
-            continue
+            return (None, None)
+
+    # Parallel build (cold-cache preview latency), deterministic order.
+    _built = await asyncio.gather(*(_build_one_anon(n, h) for n, h in candidates))
+    for it, ew in _built:
         if it is None:
             continue
         built.append(it)

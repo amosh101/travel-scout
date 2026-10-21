@@ -208,6 +208,45 @@ _GENRE_FILTER_QIDS: dict[str, list[str]] = {
     "literature": ["Q8242"],      # literature
 }
 
+# ---------------------------------------------------------------------------
+# Genre label terms — for interests whose event EDITIONS on Wikidata often
+# lack the genre property (P136 sits on the festival series, not the
+# edition). The query unions (a) genre-typed events with (b) events whose
+# English label contains the genre word — both real Wikidata rows; the
+# label leg is a transparent heuristic, not fabrication.
+# ---------------------------------------------------------------------------
+_GENRE_LABEL_TERMS: dict[str, list[str]] = {
+    "jazz": ["jazz"],
+    "electronic-music": ["techno", "house music festival", "electronic music"],
+    "rock": ["rock festival"],
+    "hip-hop": ["hip hop", "hip-hop", "rap"],
+    "afrobeat": ["afrobeat"],
+    "amapiano": ["amapiano"],
+    "latin": ["latin music"],
+    "world-music": ["world music"],
+    "classical": ["classical music festival", "chamber music"],
+    "opera": ["opera festival"],
+    "dance": ["dance festival"],
+    "food-wine": ["food festival", "wine festival", "culinary"],
+    "wine": ["wine festival"],
+    "whisky": ["whisky", "whiskey"],
+    "beer": ["beer festival", "brewing"],
+    "coffee": ["coffee"],
+    "champagne": ["champagne"],
+    "caviar": ["caviar"],
+    "literature": ["literary festival", "poetry festival"],
+    "film": ["film festival"],
+    "cycling": ["cycling", "bike race"],
+    "marathon": ["marathon"],
+    "horse-racing": ["horse race", "horse racing"],
+    "tennis": ["tennis tournament", "tennis open"],
+    "wimbledon": ["wimbledon", "tennis tournament"],
+    "golf": ["golf tournament", "golf open"],
+    "f1": ["grand prix"],
+    "motorsport": ["grand prix"],
+    "racing": ["grand prix"],
+}
+
 _WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 _USER_AGENT = "TravelScout/2.0 (research contact@travelscout.example)"
 _REQUEST_TIMEOUT = 30
@@ -245,6 +284,8 @@ class WikidataEventsClient:
         if not event_types:
             return []
         genre_filters = _GENRE_FILTER_QIDS.get(interest_key.lower(), [])
+        # Genre WORD for the label-contains UNION leg (see _build_query).
+        self._genre_word = interest_key.lower()
 
         # Date range as ISO strings, or 2025-01-01..2027-12-31 default.
         start_iso = (start_date or date(2025, 1, 1)).isoformat()
@@ -320,13 +361,31 @@ class WikidataEventsClient:
         """
         # VALUES clause for event types
         type_values = " ".join(f"wd:{qid}" for qid in event_types)
-        # VALUES clause for genres (optional, only when the interest has one)
+        # VALUES clause for genres (optional, only when the interest has one).
+        # Leg (a): the event carries the genre (P136). Leg (b): the event's
+        # English label contains the genre word — editions frequently lack
+        # P136 (it sits on the festival series), so the label leg recovers
+        # real dated editions that the strict genre filter would miss.
         genre_clause = ""
         if genre_filters:
+            terms = _GENRE_LABEL_TERMS.get(self._genre_word, [])
+            label_legs = ""
+            n_label = 0
+            for term in terms:
+                var = f"lblGenre{n_label}"
+                label_legs += (
+                    f" UNION {{\n"
+                    f"            ?event rdfs:label ?{var} .\n"
+                    f'            FILTER(LANG(?{var}) = "en" && CONTAINS(LCASE(?{var}), "{term.lower()}"))\n'
+                    f"          }}"
+                )
+                n_label += 1
             genre_values = " ".join(f"wd:{qid}" for qid in genre_filters)
             genre_clause = f"""
-            ?event wdt:P136 ?genre .
-            VALUES ?genre {{ {genre_values} }}"""
+            {{
+              ?event wdt:P136 ?genre .
+              VALUES ?genre {{ {genre_values} }}
+            }}{label_legs}"""
 
         # Country filter: by P17 (country) on the event, OR on the city.
         # This is optional — many events don't have a country linked, so

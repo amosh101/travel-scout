@@ -426,7 +426,7 @@ async def discover(
                 "distance_km": route.distance_m / 1000,
                 "duration_h": route.duration_s / 3600,
             } if route else None,
-            sources=list(set(sources_used)),
+            sources=sorted(set(sources_used)),
             missing=missing,
         )
         itineraries.append(it)
