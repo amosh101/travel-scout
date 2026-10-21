@@ -191,7 +191,7 @@ function hotelLinks(dest: string | null, checkin: string, checkout: string) {
 
 export default function SavedPage() {
   const router = useRouter();
-  const { token, ready, setToken } = useAuth();
+  const { token, user, ready, setToken } = useAuth();
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -595,6 +595,15 @@ export default function SavedPage() {
                           ? "✓ Sent to agent"
                           : "Contact booking agent"}
                     </button>
+                    {/* Concierge tier: the chat thread with your agent */}
+                    {user?.tier === "concierge" && (
+                      <Link
+                        href={`/agent-chat?select=${it.id}`}
+                        className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+                      >
+                        Message your agent
+                      </Link>
+                    )}
                     {handoffMsg[it.id] && (
                       <span
                         className={

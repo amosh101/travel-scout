@@ -106,13 +106,20 @@ export default function AgentChatPage() {
     if (!ready || !user || user.tier !== "concierge") return;
     (async () => {
       try {
-        // /api/me/itineraries or /api/saved — pick whichever exists.
+        // The saved list lives at GET /api/itineraries (total+items).
         const res = await apiFetch<{ items: ItinerarySummary[] }>(
-          "/api/saved",
+          "/api/itineraries",
         );
         setItineraries(res.items ?? []);
         if (res.items?.length && !selected) {
-          setSelected(res.items[0].id);
+          // Deep link: /agent-chat?select=<id> (from a saved trip's
+          // "Message your agent" button) wins over the first item.
+          const fromUrl = new URLSearchParams(window.location.search).get("select");
+          if (fromUrl && res.items.some((x) => x.id === fromUrl)) {
+            setSelected(fromUrl);
+          } else {
+            setSelected(res.items[0].id);
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load trips");

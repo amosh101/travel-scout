@@ -40,6 +40,7 @@ const FULL_NAV: { href: string; label: string; perms: string[] }[] = [
   { href: "/admin/sources", label: "Sources", perms: ["source.admin"] },
   { href: "/admin/audit", label: "Audit log", perms: ["audit.read"] },
   { href: "/admin/queue", label: "Agent queue", perms: ["agent.work", "agent.assign"] },
+  { href: "/admin/messages", label: "Conversations", perms: ["agent.work", "agent.assign", "itinerary.read_all"] },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -132,7 +133,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       : "Admin";
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-background text-foreground">
       <aside className="w-60 border-r border-border bg-card p-6">
         <h2 className="text-lg font-semibold">Admin</h2>
         <p className="mt-1 text-xs text-muted-foreground">Travel Scout</p>

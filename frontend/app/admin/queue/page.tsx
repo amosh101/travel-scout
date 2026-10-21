@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch, ApiError } from "../../../lib/api";
 
 type QueueItem = {
@@ -66,7 +67,17 @@ export default function AdminQueuePage() {
 
   useEffect(() => {
     load();
+    // Live queue: agents work the inbox together — poll lightly.
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
   }, [load]);
+
+  // Pull the customer's hand-off note (metadata.summary.user_note).
+  const noteOf = (q: QueueItem): string | null => {
+    const s = q.metadata?.summary as Record<string, unknown> | undefined;
+    const note = s?.user_note;
+    return typeof note === "string" && note.trim() ? note : null;
+  };
 
   const claim = async (id: string) => {
     setBusy(id);
@@ -247,6 +258,11 @@ export default function AdminQueuePage() {
                         )}
                       </div>
                     )}
+                    {noteOf(q) && (
+                      <div className="mt-2 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-amber-200">
+                        {noteOf(q)}
+                      </div>
+                    )}
                     {q.outcome_note && (
                       <div className="mt-2 text-sm text-muted-foreground">
                         Note: {q.outcome_note}
@@ -254,6 +270,14 @@ export default function AdminQueuePage() {
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
+                    {q.itinerary_id && (
+                      <Link
+                        href={`/admin/messages?it=${q.itinerary_id}`}
+                        className="rounded bg-foreground/10 px-3 py-1 text-sm font-medium transition hover:bg-foreground/20"
+                      >
+                        Open chat
+                      </Link>
+                    )}
                     {q.status === "pending" && (
                       <button
                         onClick={() => claim(q.id)}
