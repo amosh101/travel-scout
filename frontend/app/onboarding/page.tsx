@@ -145,16 +145,17 @@ function OnboardingInner() {
   const [previewErr, setPreviewErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!intake) return;
-    const dest = intake.destinations[0] || null;
-    const names: string[] = intake.interests
-      .map((k) => interests.find((i) => i.key === k)?.name)
-      .filter((n): n is string => !!n);
-    if (intake.interest_name) names.push(intake.interest_name);
-    if (!dest && names.length === 0) {
-      setPreviewState("no-dest");
-      return;
-    }
+  if (!intake) return;
+  const dest = intake.destinations[0] || null;
+  // The discover contract takes CATALOG KEYS (the interests table's
+  // key column) — Wikidata/Wikipedia route SPARQL on them. The
+  // free-text "other" interest is passed as-is.
+  const interestKeys: string[] = intake.interests.slice();
+  if (intake.interest_name) interestKeys.push(intake.interest_name);
+  if (!dest && interestKeys.length === 0) {
+    setPreviewState("no-dest");
+    return;
+  }
     let cancelled = false;
     const common = new URLSearchParams();
     if (intake.origin) common.set("origin", intake.origin);
@@ -170,7 +171,7 @@ function OnboardingInner() {
         const qs = new URLSearchParams(common);
         qs.set("destination", dest);
         qs.set("top_n", "3");
-        if (names.length) qs.set("interests", names.join(","));
+        if (interestKeys.length) qs.set("interests", interestKeys.join(","));
         try {
           const res = await apiFetch<{ results: PreviewResult[] }>(
             `/api/itineraries/discover?${qs.toString()}`,
@@ -184,9 +185,9 @@ function OnboardingInner() {
           // fall through to the interest-anchored pass
         }
       }
-      if (names.length > 0) {
+      if (interestKeys.length > 0) {
         const qs = new URLSearchParams(common);
-        qs.set("interests", names.join(","));
+        qs.set("interests", interestKeys.join(","));
         qs.set("top_n", "3");
         try {
           const res = await apiFetch<{ results: PreviewResult[] }>(
@@ -196,7 +197,11 @@ function OnboardingInner() {
         } catch (e) {
           if (!cancelled) {
             setPreviewErr(
-              e instanceof Error ? e.message : "Preview build failed",
+              e instanceof ApiError && e.status === 404
+                ? "No dated events for these interests in this window yet. Add a destination, widen the dates, or pick an interest our sources cover (motorsport, music, food-wine, film, literature, art, sport)."
+                : e instanceof Error
+                  ? e.message
+                  : "Preview build failed",
             );
             setPreviewState("error");
           }

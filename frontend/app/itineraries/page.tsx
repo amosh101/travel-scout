@@ -495,8 +495,9 @@ export default function ItinerariesPage() {
                     Events matching your interests
                   </h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Free event data from Wikidata and Wikipedia — verify dates
-                    with the source before booking.
+                    Events from Wikidata/Wikipedia plus press, blog and
+                    social feeds — every entry links to its source; verify
+                    dates before booking.
                   </p>
                   <ul className="mt-2 space-y-1 text-sm">
                     {r.interest_events
@@ -546,6 +547,15 @@ export default function ItinerariesPage() {
                     ))}
                   </ul>
                 </div>
+              )}
+
+              {/* Coverage honesty: deep-source skips + feed failures */}
+              {r.missing && r.missing.length > 0 && (
+                <ul className="mt-3 space-y-0.5 text-xs text-muted-foreground">
+                  {r.missing.map((m, i) => (
+                    <li key={i}>&middot; {m}</li>
+                  ))}
+                </ul>
               )}
 
               {/* Booking — only on the saved view; results page just shows the trip */}
