@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, ApiError } from "../../lib/api";
@@ -57,6 +57,57 @@ function OnboardingInner() {
   const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Post-selection auth (2026-10-22): the account forms no longer render at
+  // search time. They appear ONLY after the visitor selects one of the
+  // previewed itineraries — login ("Already have an account") on top, then
+  // "or, tell us about yourself" with the creation form under it.
+  const [sel, setSel] = useState<number | null>(null);
+  const [lemail, setLemail] = useState("");
+  const [lpass, setLpass] = useState("");
+  const [lbusy, setLbusy] = useState(false);
+  const [lerr, setLerr] = useState<string | null>(null);
+  const authRef = useRef<HTMLDivElement>(null);
+
+  // When a trip is selected, bring the auth panel into view.
+  useEffect(() => {
+    if (sel === null) return;
+    authRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [sel]);
+
+  async function loginSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!intentId) return;
+    setLerr(null);
+    setLbusy(true);
+    try {
+      const res = await apiFetch<{ access_token: string }>("/api/auth/login", {
+        method: "POST",
+        body: { email: lemail.trim(), password: lpass },
+      });
+      setToken(res.access_token);
+      // Apply the visitor's selections to the now-authenticated account so
+      // /itineraries builds from the profile they just searched with.
+      try {
+        await apiFetch(
+          `/api/profile/intake/${encodeURIComponent(intentId)}/apply`,
+          { method: "POST", accessToken: res.access_token },
+        );
+      } catch (applyErr) {
+        console.warn("intake apply failed:", applyErr);
+      }
+      router.push("/itineraries");
+    } catch (e) {
+      setLerr(
+        e instanceof ApiError && e.status === 401
+          ? "Wrong email or password."
+          : e instanceof Error
+            ? e.message
+            : "Login failed",
+      );
+      setLbusy(false);
+    }
+  }
 
   // Load intake + interests catalog for display.
   useEffect(() => {
@@ -306,8 +357,8 @@ function OnboardingInner() {
               </h1>
               <p className="mt-3 text-muted-foreground">
                 {previewMode === "interest"
-                  ? "Anchored on real event dates in your window. Register below to keep them across devices."
-                  : "Built from real events, public holidays, race dates, and venues. Register below to keep them across devices."}
+                  ? "Anchored on real event dates in your window. Select a trip to keep it."
+                  : "Built from real events, public holidays, race dates, and venues. Select a trip to keep it."}
               </p>
             </>
           )}
@@ -318,9 +369,8 @@ function OnboardingInner() {
               </h1>
               <p className="mt-3 text-muted-foreground">
                 You didn&apos;t pick a destination, so there is nothing to
-                preview yet. Pick at least one destination on the landing
-                page — or register below and we&apos;ll build from your saved
-                profile.
+                preview yet. Pick at least one destination on the landing page
+                and search again.
               </p>
             </>
           )}
@@ -330,9 +380,8 @@ function OnboardingInner() {
                 The preview build didn&apos;t finish
               </h1>
               <p className="mt-3 text-muted-foreground">
-                {previewErr ?? "Something went wrong building a preview."}{" "}
-                You can still register below — after you sign in we build
-                from your saved profile instead.
+                {previewErr ?? "Something went wrong building a preview."} Try
+                again, or refine your search on the landing page.
               </p>
             </>
           )}
@@ -363,8 +412,7 @@ function OnboardingInner() {
               <div className="rounded-xl border border-border bg-card p-6 text-center sm:p-8">
                 <p className="text-sm text-muted-foreground">
                   No trips matched your interests in this window. Try
-                  different interests or dates on the landing page — or
-                  register below and we&apos;ll build from your full profile.
+                  different interests or dates on the landing page.
                 </p>
               </div>
             ) : (
@@ -378,7 +426,9 @@ function OnboardingInner() {
                     return (
                       <li
                         key={r.rank}
-                        className="rounded-xl border border-border bg-card p-5 sm:p-6"
+                        className={`rounded-xl border bg-card p-5 sm:p-6 ${
+                          sel === r.rank ? "border-amber-400/60" : "border-border"
+                        }`}
                       >
                         <div className="flex flex-wrap items-baseline justify-between gap-2">
                           <h2 className="text-lg font-semibold">
@@ -387,8 +437,22 @@ function OnboardingInner() {
                               ? `, ${r.destination_country}`
                               : ""}
                           </h2>
-                          <span className="text-sm font-medium">
-                            {r.score} / 100
+                          <span className="flex items-center gap-3">
+                            <span className="text-sm font-medium">
+                              {r.score} / 100
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSel(r.rank)}
+                              aria-pressed={sel === r.rank}
+                              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                                sel === r.rank
+                                  ? "bg-amber-400/15 text-amber-200 ring-1 ring-amber-400/60"
+                                  : "bg-primary text-primary-foreground hover:opacity-90"
+                              }`}
+                            >
+                              {sel === r.rank ? "Selected ✓" : "Select this trip"}
+                            </button>
                           </span>
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
@@ -421,8 +485,8 @@ function OnboardingInner() {
                 )}
                 {previewMode === "interest" && (
                   <p className="text-sm text-muted-foreground">
-                    Full itineraries open after you register — your profile
-                    then drives the search.
+                    Select the trip you want and we&apos;ll hold it to your
+                    account.
                   </p>
                 )}
               </>
@@ -431,14 +495,65 @@ function OnboardingInner() {
         )}
       </section>
 
-      {/* Step 2: registration form */}
-      <section className="container max-w-2xl pb-20">
-        <div className="rounded-2xl border border-border bg-card p-6 shadow-xl sm:p-8">
-          <h2 className="text-xl font-semibold">Tell us about yourself</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Your selections are saved with your account so you only answer
-            once.
-          </p>
+      {/* Post-selection auth panel (2026-10-22): hidden entirely until the
+          visitor selects one of the previewed itineraries. Login on top,
+          creation form under it. */}
+      {sel !== null && (
+      <section ref={authRef} className="container max-w-2xl scroll-mt-20 pb-20">
+        <div className="space-y-8 rounded-2xl border border-border bg-card p-6 shadow-xl sm:p-8">
+          {/* Already have an account → login */}
+          <div>
+            <h2 className="text-xl font-semibold">Already have an account</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Log in and your selections will be applied to it.
+            </p>
+            <form onSubmit={loginSubmit} className="mt-4 space-y-4">
+              <Field
+                label="Email address"
+                type="email"
+                value={lemail}
+                onChange={setLemail}
+                required
+                autoComplete="email"
+              />
+              <Field
+                label="Password"
+                type="password"
+                value={lpass}
+                onChange={setLpass}
+                required
+                autoComplete="current-password"
+              />
+              {lerr && (
+                <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                  {lerr}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={lbusy}
+                className="w-full rounded-lg bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2.5 text-sm font-semibold text-background transition-opacity disabled:opacity-50"
+              >
+                {lbusy ? "Logging in…" : "Login"}
+              </button>
+            </form>
+          </div>
+
+          <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-muted-foreground">
+            <span aria-hidden className="h-px flex-1 bg-border" />
+            or
+            <span aria-hidden className="h-px flex-1 bg-border" />
+          </div>
+
+          {/* or, tell us about yourself → creation form */}
+          <div>
+            <h2 className="text-xl font-semibold">
+              or, tell us about yourself
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your selections are saved with your new account so you only
+              answer once.
+            </p>
 
           {intake && (
             <div className="mt-4 rounded-lg border border-border bg-background/60 p-3 text-xs text-muted-foreground">
@@ -592,16 +707,18 @@ function OnboardingInner() {
               disabled={busy || !intake}
               className="w-full rounded-lg bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-3 text-base font-semibold text-background transition-opacity disabled:opacity-50"
             >
-              {busy ? "Creating account…" : "Create my account & see trips"}
+              {busy ? "Creating account…" : "Create my account & save this trip"}
             </button>
 
             <p className="text-center text-xs text-muted-foreground">
-              By creating an account you agree we&rsquo;ll store your interests
+              By creating an account you agree we&apos;ll store your interests
               and intake answers to personalise your trips.
             </p>
           </form>
+          </div>
         </div>
       </section>
+      )}
     </main>
   );
 }
