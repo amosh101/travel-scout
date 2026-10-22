@@ -85,7 +85,7 @@ type DiscoverResponse = {
 export default function ItinerariesPage() {
   const router = useRouter();
   const sp = useSearchParams();
-  const { token, ready, setToken } = useAuth();
+  const { token, user, ready, userReady, setToken } = useAuth();
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -232,6 +232,12 @@ export default function ItinerariesPage() {
     return <p className="p-8 text-muted-foreground">Loading…</p>;
   }
 
+  // Mirror the global nav's signed-out test: a live token whose user
+  // record dropped (401 self-heal) counts as signed out — saved trips
+  // are a signed-in surface (owner rule: only show "My saved trips"
+  // to a logged-in customer).
+  const signedIn = !!token && !(userReady && !user);
+
   return (
     <main className="container max-w-5xl space-y-6 py-10">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
@@ -308,14 +314,17 @@ export default function ItinerariesPage() {
             - logged in: "My saved trips" + "Find another city" (we
               shouldn't say "Start over" — that's a punishment tone for
               someone who already has an account)
-            - anonymous: "My saved trips" (or login?) + "Start over"
+            - anonymous: "Start over" — "My saved trips" is a signed-in
+              surface; the P16 pitch panel below carries the log-in CTAs.
           */}
-          <Link
-            href="/saved"
-            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
-          >
-            My saved trips
-          </Link>
+          {signedIn && (
+            <Link
+              href="/saved"
+              className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+            >
+              My saved trips
+            </Link>
+          )}
           <Link
             href="/"
             className="rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
