@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
@@ -396,7 +397,10 @@ async def _build_itinerary_for(
                 hd = date.fromisoformat(h.date)
             except ValueError:
                 continue
-            if hd < date_from:
+            # Window-bounded BOTH ends (2026-10-22 fix): a profile window
+            # Oct 22 → Nov 5 used to receive Saint Andrew's Day (Nov 30)
+            # and Christmas because only the date_from end was filtered.
+            if hd < date_from or hd > date_to:
                 continue
             holiday_alerts.append({
                 "date": h.date,
@@ -568,16 +572,22 @@ async def _build_itinerary_for(
     # adventure, motorsport all have free sources now.
     from app.clients.free_events import build_free_event_aggregator
     free_agg = build_free_event_aggregator()
-    non_anchor_interests = [i for i in interests_norm
-                             if i not in f1_kw and i != "public-holidays"]
-    # Free event sources (Wikidata + Wikipedia) are rate-limited and
-    # only fire when the user has STORED interests. The default set
-    # used for anonymous previews doesn't query the free sources —
-    # they get race + holidays + hotels instead. A user with stored
-    # interests gets their personalised events from the curated
-    # Wikidata/Wikipedia lists on top of the basic result.
-    if non_anchor_interests and not is_anonymous:
-        from app.clients.free_events import _FREE_EVENTS_CACHE
+    # 2026-10-22 (Sir: "return real events"): free sources now run for
+    # EVERY interest set — F1 included — and for ANONYMOUS visitors too.
+    # The old gate (non-anchor keys only, signed-in only) starved the
+    # results on /itineraries: an f1-only profile or the anon
+    # post-selection flow got exactly zero event sources, which read
+    # as "no local events at all". f1 race anchors still come from
+    # jolpica; Wikidata adds non-race motorsport happenings on top.
+    # public-holidays rides the dedicated nager.block above.
+    feed_free_interests = sorted(
+        {i for i in interests_norm if i != "public-holidays"}
+    )
+    if feed_free_interests:
+        from app.clients.free_events import (
+            _FREE_EVENTS_CACHE,
+            _FREE_EVENTS_CACHE_TTL_S,
+        )
 
         # Bound the number of concurrent Wikipedia + Wikidata calls
         # to 2 — their per-IP rate limits degrade badly when we hit
@@ -587,14 +597,25 @@ async def _build_itinerary_for(
 
         async def _search_with_cap(interest: str):
             cache_key = (interest, d_country or "", candidate_name.lower())
-            cached = _FREE_EVENTS_CACHE.get(cache_key)
-            if cached is not None:
-                return cached
+            # TTL + never poison: a cached value is a (stamp, list)
+            # pair; errors are NOT cached — a transient Wikipedia
+            # throttle must not suppress this interest for the
+            # process lifetime (the old code cached [] forever).
+            hit = _FREE_EVENTS_CACHE.get(cache_key)
+            if hit is not None:
+                try:
+                    stamp, cached_results = hit
+                except (TypeError, ValueError):
+                    _FREE_EVENTS_CACHE.pop(cache_key, None)
+                else:
+                    if time.monotonic() - stamp < _FREE_EVENTS_CACHE_TTL_S:
+                        return cached_results
+                    _FREE_EVENTS_CACHE.pop(cache_key, None)
             try:
-                # 6s per interest — gives Wikidata + Wikipedia enough
+                # 8s per interest — gives Wikidata + Wikipedia enough
                 # time to answer even when their rate limit is briefly
-                # throttling us. The cache makes this a one-time cost
-                # per (interest, country, city) tuple.
+                # throttling us. The TTL cache makes this a one-time
+                # cost per (interest, country, city) tuple.
                 async with sem:
                     result = await asyncio.wait_for(
                         free_agg.search(
@@ -605,18 +626,17 @@ async def _build_itinerary_for(
                             city=candidate_name,
                             limit=5,
                         ),
-                        timeout=6.0,
+                        timeout=8.0,
                     )
-                _FREE_EVENTS_CACHE[cache_key] = result
+                _FREE_EVENTS_CACHE[cache_key] = (time.monotonic(), result)
                 return result
-            except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 logger.info("Free events for %s in %s: %s", interest, candidate_name, e)
-                _FREE_EVENTS_CACHE[cache_key] = []
                 return []
 
         try:
             per_interest = await asyncio.gather(
-                *(_search_with_cap(k) for k in non_anchor_interests),
+                *(_search_with_cap(k) for k in feed_free_interests),
                 return_exceptions=True,
             )
         except Exception as e:  # noqa: BLE001
@@ -638,6 +658,7 @@ async def _build_itinerary_for(
                     country = e.get("country", "")
                     source = e.get("source", "wikipedia")
                     source_url = e.get("source_url")
+                    date_note = ""
                 else:
                     kind = getattr(e, "kind", "event") or "event"
                     title = getattr(e, "name", None) or "Event"
@@ -646,10 +667,21 @@ async def _build_itinerary_for(
                     country = getattr(e, "country", "") or ""
                     source = getattr(e, "source", "") or "wikipedia"
                     source_url = getattr(e, "source_url", None)
+                    extra = getattr(e, "extra", None) or {}
+                    date_note = str(extra.get("date_note") or "")
+                # Honest date rendering: a month-only festival anchor
+                # (e.g. infobox 'date = March') shows the month context
+                # instead of a bare fake-looking "…-03-01".
+                iso = (
+                    starts_at.isoformat()
+                    if hasattr(starts_at, "isoformat")
+                    else (str(starts_at) if starts_at else None)
+                )
+                date_str = f"{iso} — {date_note}" if (iso and date_note) else iso
                 anchor_events.append({
                     "kind": kind,
                     "title": title,
-                    "date": starts_at.isoformat() if starts_at else None,
+                    "date": date_str,
                     "city": city,
                     "country": country,
                     "source": source,
@@ -668,11 +700,11 @@ async def _build_itinerary_for(
     # date is never used as an event date).
     # ------------------------------------------------------------------
     notes: list[str] = []
-    if non_anchor_interests:
+    if feed_free_interests:
         from app.clients.interest_feeds import search_for_trip as _deep_search
         try:
             deep_events, deep_notes = await _deep_search(
-                non_anchor_interests,
+                feed_free_interests,
                 city=d_name,
                 country=d_country_name,
                 start_date=date_from,
@@ -686,6 +718,50 @@ async def _build_itinerary_for(
         if deep_events and "interest_feeds" not in sources_used:
             sources_used.append("interest_feeds")
         notes.extend(deep_notes)
+
+    # Ticketmaster Discovery — REAL local ticketed listings (concerts,
+    # games, theatre). Free API, key-gated: no key → skip silently (a
+    # "not configured" note on every card reads as the feature being
+    # broken — the mistake that produced the old feed notes);
+    # sources_used gains "ticketmaster" only when it returns events.
+    if feed_free_interests:
+        from app.clients.ticketmaster import build_ticketmaster_client
+        try:
+            tm = build_ticketmaster_client()
+            if tm.is_configured():
+                tm_batches = await asyncio.gather(
+                    *(
+                        tm.search_events(
+                            city=d_name,
+                            country=d_country,
+                            start_date=datetime.combine(date_from, datetime.min.time()),
+                            end_date=datetime.combine(date_to, datetime.max.time()),
+                            keyword=i.replace("-", " "),
+                            size=6,
+                        )
+                        for i in feed_free_interests[:3]
+                    ),
+                    return_exceptions=True,
+                )
+                got_any = False
+                for b in tm_batches:
+                    if isinstance(b, Exception):
+                        continue
+                    for ev in b:
+                        anchor_events.append({
+                            "kind": "interest_event",
+                            "title": ev.title,
+                            "date": ev.starts_at.isoformat(),
+                            "city": ev.venue_city or d_name,
+                            "country": ev.venue_country or (d_country or ""),
+                            "source": "ticketmaster",
+                            "source_url": ev.url,
+                        })
+                        got_any = True
+                if got_any and "ticketmaster" not in sources_used:
+                    sources_used.append("ticketmaster")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Ticketmaster enrichment failed: %s", e)
 
     # ------------------------------------------------------------------
     # STRICT TRIP RELEVANCE (one pass over all sources):

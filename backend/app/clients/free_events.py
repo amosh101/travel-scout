@@ -1152,6 +1152,207 @@ class WikipediaListClient:
         except ValueError:
             return None
 
+    # ------------------------------------------------------------------
+    # City-article search (2026-10-22, Sir: "return real events"):
+    # MediaWiki search keyed on "<interest noun> <city>", then infobox
+    # date + location extraction from the event's own article. This leg
+    # surfaces REAL dated local events for cities the Wikidata event
+    # types miss — e.g. Cape Town International Jazz Festival has NO
+    # dated edition in Wikidata, but its article infobox says
+    # "date = March, venue = Cape Town". Free, no key, CC-BY-SA.
+    # ------------------------------------------------------------------
+    _SEARCH_SKIP_KEYS = {"f1", "motorsport", "racing", "formula 1",
+                         "public-holidays", "casino", "poker", "luxury"}
+    _SEARCH_NOUNS = {
+        "electronic-music": "electronic music festival",
+        "art-museums": "art exhibition",
+        "modern-art": "art exhibition",
+        "renaissance-art": "art exhibition",
+        "food-wine": "food and wine festival",
+        "wine": "wine festival",
+        "champagne": "wine festival",
+        "beer": "beer festival",
+        "whisky": "whisky festival",
+        "coffee": "coffee festival",
+        "caviar": "food festival",
+        "literature": "literary festival",
+        "film": "film festival",
+        "comedy": "comedy festival",
+        "theatre": "theatre festival",
+        "opera": "opera festival",
+        "classical": "classical music festival",
+        "dance": "dance festival",
+        "architecture": "architecture festival",
+        "design": "design festival",
+        "fashion": "fashion week",
+        "adventure": "adventure race",
+        "kite-surfing": "kite surfing competition",
+        "wellness": "wellness retreat festival",
+        "skiing": "skiing competition",
+        "football": "football tournament",
+        "golf": "golf tournament",
+        "cycling": "cycling race",
+        "marathon": "marathon",
+        "horse-racing": "horse race meeting",
+        "sailing": "regatta",
+        "esports": "esports tournament",
+        "nightlife": "music festival",
+    }
+
+    async def search_city_articles(
+        self,
+        interest_key: str,
+        *,
+        city: str,
+        country_alpha2: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 4,
+    ) -> list[EventRecord]:
+        if not city or interest_key in self._SEARCH_SKIP_KEYS:
+            return []
+        noun = self._SEARCH_NOUNS.get(
+            interest_key, f"{interest_key.replace('-', ' ')} festival"
+        )
+        try:
+            s = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "list": "search",
+                    "srsearch": f"{noun} {city}", "srlimit": "4",
+                    "format": "json",
+                },
+                headers={"User-Agent": _USER_AGENT},
+                impersonate="chrome120", timeout=10,
+            )
+            s.raise_for_status()
+            hits = [
+                hit["title"]
+                for hit in ((s.json().get("query") or {}).get("search") or [])[:4]
+            ]
+        except Exception as e:  # noqa: BLE001
+            logger.info("City-article search failed for %s/%s: %s",
+                        interest_key, city, e)
+            return []
+        out: list[EventRecord] = []
+        for title in hits:
+            # The event article's own infobox carries the real dates.
+            try:
+                r = requests.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "parse", "page": title,
+                        "prop": "wikitext", "format": "json",
+                    },
+                    headers={"User-Agent": _USER_AGENT},
+                    impersonate="chrome120", timeout=12,
+                )
+                r.raise_for_status()
+                wikitext = (r.json().get("parse") or {}).get("wikitext") or {}
+                wikitext = wikitext.get("*", "") if isinstance(wikitext, dict) else wikitext
+            except Exception as e:  # noqa: BLE001
+                logger.info("City article %s fetch failed: %s", title, e)
+                continue
+            if not wikitext:
+                continue
+            head = wikitext[:6000]
+            loc_m = re.search(
+                r"\|\s*(?:location|venue)\s*=\s*([^\n\|]{3,120})", head, re.I)
+            loc_flat = re.sub(
+                r"\[\[([^][]+)(?:\|[^][]+)?\]\]", r"\1", loc_m.group(1)
+            ) if loc_m else ""
+            # Accent/case-insensitive city containment.
+            import unicodedata
+            _fold = lambda t: "".join(
+                c for c in unicodedata.normalize("NFKD", t or "")
+                if not unicodedata.combining(c)
+            ).lower()
+            if _fold(city) not in _fold(loc_flat):
+                continue
+            dm = re.search(r"\|\s*dates?\s*=\s*([^\n\|]{2,90})", head, re.I)
+            starts_at, note = self._place_in_window(
+                dm.group(1) if dm else "", start_date, end_date
+            )
+            if starts_at is None:
+                continue
+            out.append(EventRecord(
+                name=title,
+                kind=f"{interest_key}_event",
+                starts_at=starts_at,
+                location=_build_location(country_alpha2 or "", "", city),
+                extra={"date_note": note},
+            ))
+            if len(out) >= limit:
+                break
+        return out
+
+    @staticmethod
+    def _place_in_window(
+        date_field: str,
+        start_date: date | None,
+        end_date: date | None,
+    ) -> tuple[date | None, str]:
+        """Match an infobox date against the trip window. Real-data rule:
+        nothing is invented — an unsatisfiable or undated field returns
+        (None, '') and the event is dropped.
+
+        - exact day-month-year inside window → that date, no note
+        - month + year without a day → first day of that month when the
+          month overlaps the window; note says day is to be confirmed
+        - month with no year (recurring, e.g. 'date = March') → the next
+          matching month inside the window, same note
+        """
+        if not (start_date and end_date) or not date_field:
+            return None, ""
+        mon = (r"January|February|March|April|May|June|July|August|"
+               r"September|October|November|December")
+        # "25 March 2027" / "25th March 2027"
+        m = re.search(
+            r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(%s)\s+(20\d\d)\b" % mon,
+            date_field, re.I,
+        )
+        if not m:
+            # "March 25, 2027" / "March 25 2027"
+            m = re.search(
+                r"\b(%s)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d\d)\b" % mon,
+                date_field, re.I,
+            )
+            if m:
+                try:
+                    d = date(int(m.group(3)), _MONTHS[str(m.group(1)).lower().title()],
+                             int(m.group(2)))
+                except ValueError:
+                    return None, ""
+                return (d, "") if start_date <= d <= end_date else (None, "")
+        elif m:
+            try:
+                d = date(int(m.group(3)),
+                         _MONTHS[str(m.group(2)).lower().title()],
+                         int(m.group(1)))
+            except ValueError:
+                return None, ""
+            return (d, "") if start_date <= d <= end_date else (None, "")
+        # Month (+ optional year) fallback — infoboxes of annual
+        # festivals usually carry just the month.
+        ym = re.search(r"\b(%s)\s*(20\d\d)?\b" % mon, date_field, re.I)
+        if not ym:
+            return None, ""
+        month_n = _MONTHS[str(ym.group(1)).lower().title()]
+        year_hint = int(ym.group(2)) if ym.group(2) else None
+        y, mo = start_date.year, start_date.month
+        while (y, mo) <= (end_date.year, end_date.month):
+            cand = date(y, mo, 1)
+            if cand.month == month_n and (
+                year_hint is None or cand.year == year_hint
+            ):
+                if end_date >= cand:
+                    return cand, "festival month — day to be confirmed"
+                return None, ""
+            mo += 1
+            if mo > 12:
+                mo, y = 1, y + 1
+        return None, ""
+
 
 _MONTHS = {
     "January": 1, "February": 2, "March": 3, "April": 4,
@@ -1214,6 +1415,13 @@ class FreeEventAggregator:
                 start_date=start_date, end_date=end_date,
                 city=city,
                 limit=limit,
+            ),
+            self.wikipedia.search_city_articles(
+                interest_key,
+                city=city or "",
+                country_alpha2=country_alpha2,
+                start_date=start_date, end_date=end_date,
+                limit=4,
             ),
             return_exceptions=True,
         )

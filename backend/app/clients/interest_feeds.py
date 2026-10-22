@@ -452,24 +452,17 @@ async def search_for_trip(
     kept.sort(key=lambda e: (e.get("date") or "", e.get("title") or ""))
     if len(kept) > limit_per_interest * len(interest_names):
         kept = kept[: limit_per_interest * len(interest_names)]
+    # Notes (2026-10-22 rewording, Sir: the three-line skip-accounting
+    # read as "the feature is broken"). Keep it short and honest:
+    # mention only real failures, and only in a single line when the
+    # harvest came up empty.
     if skips["feed_failed"]:
         notes.append(
-            f"interest_feeds: {skips['feed_failed']} feed(s) unreachable this run"
+            f"{skips['feed_failed']} press feed(s) couldn't be reached this run"
         )
-    reviewed = (
-        skips["not_eventish"] + skips["city_unmatched"]
-        + skips["no_date"] + skips["not_interest"]
-    )
-    notes.append(
-        f"interest_feeds: reviewed {reviewed} feed item(s); skipped "
-        f"{skips['not_eventish']} not event-like / "
-        f"{skips['city_unmatched']} city-unmatched / "
-        f"{skips['no_date']} without explicit in-window event date / "
-        f"{skips['not_interest']} off-interest"
-    )
     if not kept:
         notes.append(
-            "interest_feeds: no dated, place-matched events in "
-            "magazine/blog/press/social feeds this run"
+            "no dated local listings in press/magazine feeds this window "
+            "(races, holidays and event-database results still shown above)"
         )
     return kept, notes
