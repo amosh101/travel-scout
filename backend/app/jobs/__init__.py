@@ -1,0 +1,1 @@
+# app.jobs package — in-process background jobs (scheduler: weekly digests)

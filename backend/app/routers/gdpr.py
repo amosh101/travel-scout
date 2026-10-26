@@ -314,6 +314,30 @@ async def delete_me(
     user.emergency_contact_phone = None
     user.updated_at = datetime.now(timezone.utc)
 
+    # 2026-10-21 columns: SMS target + digest state are personal too.
+    user.phone = None
+    user.digest_optout = True
+    user.digest_last_sent_at = None
+
+    # Stripe-side erasure: the customer record holds its own copy of the
+    # email. Capture the id BEFORE blanking; delete best-effort, honest
+    # skip when the key is absent.
+    stripe_side = "skipped_not_configured"
+    from app.config import get_settings
+    _settings = get_settings()
+    _stripe_customer = user.stripe_customer_id
+    if (_settings.stripe_secret_key
+            and not _settings.stripe_secret_key.startswith("replace_me")
+            and _stripe_customer):
+        try:
+            import stripe as _stripe
+            _stripe.Customer.delete(_stripe_customer)
+            stripe_side = "deleted"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("stripe customer delete failed for %s: %s", _stripe_customer, e)
+            stripe_side = "failed_stripe"
+    user.stripe_customer_id = None
+
     # Revoke all roles.
     role_rows = (
         await session.execute(
@@ -336,6 +360,7 @@ async def delete_me(
             "original_email_domain": original_email.split("@")[-1]
             if "@" in original_email else None,
             "reason": body.reason,
+            "stripe_side": stripe_side,
         },
     )
     await session.commit()

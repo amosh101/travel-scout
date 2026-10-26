@@ -57,6 +57,32 @@ class Settings(BaseSettings):
     ticketmaster_api_key: str = ""
     jolpica_api_key: str = ""
 
+    # --- Transactional delivery (2026-10-21) ---
+    # Email via SMTP; SMS via Twilio REST. Missing values = the channel
+    # SKIPS HONESTLY (status 'skipped_not_configured'), never fakes
+    # success. Globals by design: SMTP + international SMS.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""
+
+    # Stripe price ids per subscription tier (Checkout hand-off).
+    stripe_price_limited: str = ""
+    stripe_price_unlimited: str = ""
+    stripe_price_concierge: str = ""
+
+    # --- Weekly digest scheduler ---
+    digests_enabled: bool = True
+    digest_window_days: int = 30
+    digest_max_results: int = 3
+    digest_check_interval_s: int = 300
+
     # --- Media (file attachments for chat messages, 2026-07-24) ---
     # Where MessageAttachment payloads land on disk. Created at startup
     # if missing. Per-tenant subdirectories are appended by the upload
@@ -66,6 +92,9 @@ class Settings(BaseSettings):
 
     # --- Tailscale admin gate ---
     admin_allowed_cidrs: str = "100.64.0.0/10"
+
+    # --- Frontend origin (Stripe success/return URLs) ---
+    web_base_url: str = "http://100.91.143.50:3000"
 
     # --- Bootstrap admin (first-boot superadmin) ---
     # Set via env: BOOTSTRAP_ADMIN_EMAIL.

@@ -37,6 +37,7 @@ from app.models import AuditLog, Interest, SavedItinerary, Subscription, User, U
 from app.models import ActorKind, UserRole
 from app.schemas.me import ChangePasswordIn, MeOut, MePatch, OnboardingIn, OnboardingOut
 from app.security import hash_password, verify_password
+from app.security import obfuscate_passport
 from app.services.authz import get_current_user, write_audit_log
 from app.services.redis_intent import delete_intent, load_intent, store_intent
 from app.services.travel_when import (
@@ -713,17 +714,21 @@ async def patch_me(
     if patch.nationality is not None:
         updates["nationality"] = patch.nationality
     if patch.passport is not None:
-        # T8f TODO: store obfuscated. The obfuscation helper is not yet
-        # wired (T8f follow-up card). For now store the raw value in
-        # ``passport_number`` — the PATCH endpoint is gated by JWT and
-        # the field is column-encrypted at rest by the DB.
-        updates["passport_number"] = patch.passport
+        # Stored obfuscated at rest — same helper as the register path
+        # (fixes the audit HIGH: raw passport on PATCH).
+        updates["passport_number"] = obfuscate_passport(patch.passport)
     if patch.dob is not None:
         updates["date_of_birth"] = patch.dob
     if patch.emergency_contact_name is not None:
         updates["emergency_contact_name"] = patch.emergency_contact_name
     if patch.emergency_contact_phone is not None:
         updates["emergency_contact_phone"] = patch.emergency_contact_phone
+    if patch.phone is not None:
+        # Delivery target for SMS confirmations (global).
+        updates["phone"] = patch.phone
+    if patch.digest_optout is not None:
+        # Weekly auto-digest consent switch.
+        updates["digest_optout"] = patch.digest_optout
     if patch.home_airport is not None:
         # home_airport is now a real column (migration
         # 0002_user_onboarding_fields). Persist it on the User row.

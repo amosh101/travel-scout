@@ -33,6 +33,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    text,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PortableUUID
@@ -146,6 +147,15 @@ class User(Base):
     # returned by GET /me.
     interests_json = Column(portable_json(), nullable=True)
     destinations_json = Column(portable_json(), nullable=True)
+
+    # --- Delivery (2026-10-21): email is the account email; SMS needs a
+    # number. Weekly digest state: opted-out users are skipped by the
+    # scheduler; digest_last_sent_at anchors the "one per week" rule.
+    phone = Column(String(32), nullable=True)
+    digest_optout = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    digest_last_sent_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = created_at_column()
     updated_at = updated_at_column()
@@ -265,6 +275,9 @@ class Interest(Base):
     kind = Column(String(32), nullable=True)
     destination_region = Column(String(64), nullable=True)
     destination_flexibility = Column(String(32), nullable=True)  # strict | flexible | anywhere
+    # Admin CRUD (2026-10-21): deactivating hides the key from onboarding
+    # and discover without deleting historical user_interests rows.
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
 
     created_at = created_at_column()
 
@@ -482,6 +495,19 @@ class BookingsLog(Base):
     claimed_at = Column(DateTime(timezone=True), nullable=True)
     outcome_at = Column(DateTime(timezone=True), nullable=True)
     outcome_note = Column(Text, nullable=True)
+    # 2026-10-21 commerce: customer pays the agent OFF-PLATFORM; the
+    # agent records the payment here and the platform confirms to the
+    # customer (chat + email/SMS). payment_status: none|paid|unpaid
+    # (default none — legacy rows read correctly).
+    payment_status = Column(
+        String(16), nullable=False, server_default="none", default="none"
+    )
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    # Platform commission on this booking (agent-set at outcome, admin
+    # auditable). Cents of the same currency.
+    commission_cents = Column(
+        Integer, nullable=False, server_default="0", default=0
+    )
 
     created_at = created_at_column()
 
@@ -489,6 +515,16 @@ class BookingsLog(Base):
         Index("ix_bookings_log_user", "user_id"),
         Index("ix_bookings_log_status", "status"),
         Index("ix_bookings_log_agent", "assigned_agent_id"),
+        # G-02: at most ONE open hand-off per itinerary — the DB makes
+        # the double-booking hole structurally impossible.
+        Index(
+            "uq_bookings_log_active_one",
+            "itinerary_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('pending', 'claimed', 'in_progress')"
+            ),
+        ),
     )
 
 
@@ -719,6 +755,36 @@ class UsageCounter(Base):
     )
 
 
+class Digest(Base):
+    """A weekly auto-generated digest of dated trips for one user.
+
+    Built by ``app.jobs.scheduler`` from the SAME discovery engine the
+    /itineraries page uses (origin + stored interests, next ~30 days).
+    Delivery: this row IS the in-app copy (/saved renders it); email is
+    sent to the account email when SMTP is configured, SMS is skipped
+    for digests by design (short alerts only).
+    """
+
+    __tablename__ = "digests"
+
+    id = uuid_pk_column()
+    user_id = Column(
+        PortableUUID(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    week_of = Column(SA_Date, nullable=False)  # Monday of the digest week
+    window = Column(portable_json(), nullable=False, default=dict)  # {date_from, date_to}
+    payload = Column(portable_json(), nullable=False, default=list)  # itinerary summaries
+    sent_email = Column(Boolean, nullable=False, default=False)
+    email_status = Column(String(32), nullable=False, default="skipped")  # sent|skipped_not_configured|failed:<reason>
+    created_at = created_at_column()
+
+    __table_args__ = (
+        Index("ix_digests_user_week", "user_id", "week_of", unique=True),
+    )
+
+
 # Re-export all models for convenient import from ``app.models``
 # -----------------------------------------------------------------------------
 # Messages (concierge thread per itinerary)
@@ -740,6 +806,7 @@ __all__ = [
     "CityAlias",
     "Country",
     "Destination",
+    "Digest",
     "Event",
     "EventSource",
     "FlightOffer",

@@ -27,6 +27,7 @@ from app.models import (
     SubscriptionTier,
     User,
 )
+from app.routers.auth import get_current_user
 from app.services.audit import AuditService
 
 logger = logging.getLogger(__name__)
@@ -235,3 +236,96 @@ _HANDLERS = {
     "invoice.paid": _on_invoice_paid,
     "invoice.payment_failed": _on_invoice_payment_failed,
 }
+
+
+# -----------------------------------------------------------------------------
+# Checkout + customer portal (2026-10-21 subscriptions)
+# -----------------------------------------------------------------------------
+
+_PRICE_BY_TIER = {
+    # SubscriptionTier -> settings attribute that carries the Stripe price id.
+    SubscriptionTier.LIMITED: "stripe_price_limited",
+    SubscriptionTier.UNLIMITED: "stripe_price_unlimited",
+    SubscriptionTier.CONCIERGE: "stripe_price_concierge",
+}
+
+
+@router.post("/checkout")
+async def create_checkout_session(
+    body: dict[str, Any] | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Start a subscription: return a hosted Stripe Checkout URL.
+
+    PCI stays entirely on Stripe's hosted page. Honest 503 when Stripe
+    keys or the tier's price id are not configured — never a fake link.
+    """
+    tier_name = (body or {}).get("tier", "")
+    try:
+        tier = SubscriptionTier(tier_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"unknown tier: {tier_name!r}")
+    if tier == SubscriptionTier.FREE:
+        raise HTTPException(status_code=400, detail="free tier needs no checkout")
+
+    settings = get_settings()
+    if not settings.stripe_secret_key or settings.stripe_secret_key.startswith("replace_me"):
+        raise HTTPException(status_code=503, detail="billing not configured (stripe key)")
+    attr = _PRICE_BY_TIER[tier]
+    price_id = getattr(settings, attr, "")
+    if not price_id:
+        raise HTTPException(
+            status_code=503,
+            detail=f"billing not configured (price id for tier {tier_name})",
+        )
+
+    import stripe
+
+    if user.stripe_customer_id is None:
+        customer = stripe.Customer.create(
+            email=user.email, name=user.name or None,
+            metadata={"user_id": str(user.id)},
+        )
+        user.stripe_customer_id = customer.id
+        await session.commit()
+
+    checkout = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=user.stripe_customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{settings.web_base_url}/pricing?checkout=success",
+        cancel_url=f"{settings.web_base_url}/pricing",
+        metadata={"user_id": str(user.id), "tier": tier.value},
+    )
+    await AuditService.record(
+        session,
+        actor_user_id=user.id,
+        actor_kind=ActorKind.USER,
+        action="billing.checkout_started",
+        target_kind="stripe_checkout",
+        target_id=checkout.id,
+        metadata={"tier": tier.value},
+    )
+    await session.commit()
+    return {"url": checkout.url, "session_id": checkout.id, "tier": tier.value}
+
+
+@router.post("/portal")
+async def create_portal_session(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Stripe-hosted customer portal (manage payment method / cancel)."""
+    settings = get_settings()
+    if not settings.stripe_secret_key or settings.stripe_secret_key.startswith("replace_me"):
+        raise HTTPException(status_code=503, detail="billing not configured (stripe key)")
+    if not user.stripe_customer_id:
+        raise HTTPException(status_code=404, detail="no stripe customer — subscribe first")
+    import stripe
+
+    portal = stripe.billing_portal.Session.create(
+        customer=user.stripe_customer_id,
+        return_url=f"{settings.web_base_url}/pricing",
+    )
+    return {"url": portal.url}

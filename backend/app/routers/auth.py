@@ -356,6 +356,10 @@ async def register(
         date_of_birth=body.date_of_birth,
         emergency_contact_name=body.emergency_contact_name,
         emergency_contact_phone=body.emergency_contact_phone,
+        # SMS delivery target (2026-10-21): confirmations + alerts.
+        # Previously only a phone_provided flag was recorded; the number
+        # itself now lands on the user row (still optional, minimised).
+        phone=body.phone,
     )
     session.add(user)
     await session.flush()
@@ -437,6 +441,19 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="account disabled"
         )
     token = create_access_token(subject=email)
+
+    # Usage reports: every successful login is an audited login.
+    from app.services.authz import write_audit_log
+    await write_audit_log(
+        session,
+        actor_user_id=user.id,
+        action="user.login",
+        target_kind="users",
+        target_id=str(user.id),
+        actor_kind=ActorKind.USER,
+    )
+    await session.commit()
+
     return TokenResponse(
         access_token=token,
         user={

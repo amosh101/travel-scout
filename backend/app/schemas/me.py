@@ -37,6 +37,10 @@ class MePatch(BaseModel):
     dob: Optional[date] = None
     emergency_contact_name: Optional[str] = Field(default=None, max_length=255)
     emergency_contact_phone: Optional[str] = Field(default=None, max_length=32)
+    # Global SMS delivery target (payment/booking confirmations).
+    phone: Optional[str] = Field(default=None, max_length=32)
+    # Weekly auto-generated digest consent (True = stop the emails).
+    digest_optout: Optional[bool] = None
     home_airport: Optional[str] = Field(default=None, max_length=8)
 
 

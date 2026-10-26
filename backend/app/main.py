@@ -13,6 +13,7 @@ from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.tailscale_gate import TailscaleAdminGate
 from app.routers import (
     admin_audit,
+    admin_interests,
     admin_sources,
     admin_users,
     admin_weights,
@@ -26,6 +27,7 @@ from app.routers import (
     messages,
     profile,
     refdata,
+    reports,
     search,
 )
 
@@ -59,9 +61,20 @@ async def lifespan(app: FastAPI):
             await bootstrap_admin(session)
     except Exception as exc:  # noqa: BLE001
         logger.exception("reference seed failed (non-fatal): %s", exc)
-    yield
-    await dispose_engine()
-    logger.info("Shut down %s", settings.app_name)
+    # Weekly digest scheduler (in-process; idempotent per its anchors).
+    try:
+        from app.jobs.scheduler import start_scheduler
+        await start_scheduler()
+        logger.info("weekly digest scheduler started")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("digest scheduler failed to start (non-fatal): %s", exc)
+    try:
+        yield
+    finally:
+        from app.jobs.scheduler import stop_scheduler
+        await stop_scheduler()
+        await dispose_engine()
+        logger.info("Shut down %s", settings.app_name)
 
 
 def create_app() -> FastAPI:
@@ -96,6 +109,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_users.router, prefix=settings.api_v1_prefix)
     app.include_router(admin_weights.router, prefix=settings.api_v1_prefix)
     app.include_router(admin_sources.router, prefix=settings.api_v1_prefix)
+    app.include_router(admin_interests.router, prefix=settings.api_v1_prefix)
+    app.include_router(reports.router, prefix=settings.api_v1_prefix)
     app.include_router(agent.router, prefix=settings.api_v1_prefix)  # T8e
     app.include_router(messages.router, prefix=settings.api_v1_prefix)  # T8e-chat
     app.include_router(refdata.router, prefix=settings.api_v1_prefix)

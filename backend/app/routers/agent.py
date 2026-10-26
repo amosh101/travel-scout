@@ -62,6 +62,10 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 class HandOffRequest(BaseModel):
     itinerary_id: UUID
     note: str | None = Field(default=None, max_length=2000)
+    # G-02: set true when the caller KNOWS the itinerary already had a
+    # finished hand-off (per-trip rebooking is legitimate; silent
+    # duplication is not).
+    acknowledge_prior: bool = False
 
 
 class HandOffResponse(BaseModel):
@@ -89,6 +93,11 @@ class QueueItem(BaseModel):
     claimed_at: str | None
     outcome_at: str | None
     outcome_note: str | None
+    # Commerce (agent-pay): the customer pays the agent off-platform;
+    # the agent records it and the platform confirms to the customer.
+    payment_status: str = "none"
+    paid_at: str | None = None
+    commission_cents: int = 0
     created_at: str
 
 
@@ -112,6 +121,16 @@ class OutcomeRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     external_id: str | None = Field(default=None, max_length=255)
+    commission_cents: int | None = Field(default=None, ge=0)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class PaymentRequest(BaseModel):
+    """Agent records the customer's OFF-PLATFORM payment (agent-pay)."""
+    amount_cents: int = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    commission_cents: int | None = Field(default=None, ge=0)
+    method: str | None = Field(default=None, max_length=120)  # "cash", "M-Pesa", "bank transfer"...
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -158,6 +177,9 @@ async def _row_to_queue_item(session: AsyncSession, row: BookingsLog) -> QueueIt
         claimed_at=row.claimed_at.isoformat() if row.claimed_at else None,
         outcome_at=row.outcome_at.isoformat() if row.outcome_at else None,
         outcome_note=row.outcome_note,
+        payment_status=getattr(row, "payment_status", "none"),
+        paid_at=row.paid_at.isoformat() if row.paid_at else None,
+        commission_cents=getattr(row, "commission_cents", 0),
         created_at=row.created_at.isoformat(),
     )
 
@@ -204,6 +226,37 @@ async def hand_off_to_agent(
             message="already in queue; an agent is (or will be) on it",
         )
 
+    # Double-booking guard (G-02): a prior finished row may already exist
+    # for this itinerary (confirmed/failed). Re-handing off needs an
+    # explicit acknowledgement so an agent never mistakes it for a
+    # fresh booking; the prior outcome is quoted in the 409.
+    prior = (await session.execute(
+        select(BookingsLog).where(
+            BookingsLog.itinerary_id == body.itinerary_id,
+            BookingsLog.user_id == user.id,
+            BookingsLog.status.in_(("confirmed", "failed", "refunded")),
+        ).order_by(BookingsLog.outcome_at.desc().nullslast()).limit(1)
+    )).scalar_one_or_none()
+    if prior is not None and not body.acknowledge_prior:
+        prior_summary = (prior.metadata_json or {}).get("summary") or {}
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prior_handoff_exists",
+                "message": "this itinerary already has a finished hand-off; "
+                "re-handoff needs acknowledge_prior=true",
+                "prior": {
+                    "status": prior.status,
+                    "amount_cents": prior.amount_cents,
+                    "currency": prior.currency,
+                    "external_id": prior.external_id,
+                    "outcome_note": prior.outcome_note,
+                    "outcome_at": prior.outcome_at.isoformat() if prior.outcome_at else None,
+                },
+                "hint": prior_summary.get("itinerary_title"),
+            },
+        )
+
     payload = saved.payload or {}
     summary = {
         "itinerary_title": saved.title,
@@ -223,13 +276,15 @@ async def hand_off_to_agent(
         status="pending",
         amount_cents=0,
         currency="USD",
+        payment_status="none",
         metadata_json={
             "summary": summary,
             "user_email": user.email,
             "user_name": user.name,
-            # Phone is on the user.metadata blob written by the
-            # v2.1 register extension. Best-effort — missing on older users.
-            "user_phone": None,
+            # Prefer the profile phone (col added 2026-10-21); best-effort
+            # for legacy users whose phone is still only in the register
+            # metadata blob.
+            "user_phone": getattr(user, "phone", None),
         },
     )
     session.add(row)
@@ -385,6 +440,123 @@ async def release_queue_item(
     return ClaimResponse(id=str(row.id), status="pending", claimed_at="")
 
 
+@router.post("/queue/{queue_id}/payment", response_model=QueueItem)
+async def record_payment(
+    queue_id: UUID,
+    body: PaymentRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    agent: Annotated[User, Depends(require_permission("agent.work"))],
+):
+    """Agent-side: record the customer's OFF-PLATFORM payment.
+
+    The customer pays the agent directly (M-Pesa, bank transfer, cash,
+    card-on-terminal). The agent records it here; the platform then
+    confirms to the customer across channels: a SYSTEM chat message
+    (always) + email/SMS when configured. The money never touches the
+    platform — this is the confirmation + reconciliation record.
+    """
+    row = (await session.execute(
+        select(BookingsLog).where(BookingsLog.id == queue_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="queue item not found")
+    if row.assigned_agent_id != agent.id:
+        raise HTTPException(status_code=403, detail="you did not claim this item")
+    if row.status not in ("claimed", "in_progress"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot record payment on a {row.status} item",
+        )
+    if row.payment_status == "paid":
+        raise HTTPException(status_code=409, detail="payment already recorded for this item")
+
+    row.amount_cents = body.amount_cents
+    row.currency = body.currency.upper()
+    row.payment_status = "paid"
+    row.paid_at = datetime.now(timezone.utc)
+    # A recorded payment means work is underway on this hand-off.
+    row.status = "in_progress"
+    if body.commission_cents is not None:
+        row.commission_cents = body.commission_cents
+    meta = dict(row.metadata_json or {})
+    meta["payment_method"] = body.method
+    meta["payment_note"] = body.note
+    row.metadata_json = meta
+
+    await write_audit_log(
+        session,
+        actor_user_id=agent.id,
+        action="agent.payment.recorded",
+        target_kind="bookings_log",
+        target_id=str(row.id),
+        metadata={
+            "amount_cents": row.amount_cents,
+            "currency": row.currency,
+            "commission_cents": row.commission_cents,
+            "method": body.method,
+        },
+        actor_kind=ActorKind.AGENT,
+    )
+
+    # SYSTEM message in the thread — the in-app confirmation, permanent
+    # (chat keeps history). sender_user_id = the recording agent.
+    itin = (await session.execute(
+        select(SavedItinerary).where(SavedItinerary.id == row.itinerary_id)
+    )).scalar_one_or_none()
+    owner = (await session.execute(
+        select(User).where(User.id == row.user_id)
+    )).scalar_one_or_none()
+    if itin is not None:
+        amount = f"{row.amount_cents / 100:.2f} {row.currency}"
+        pm = f" via {body.method}" if body.method else ""
+        msg = Message(
+            itinerary_id=itin.id,
+            sender_user_id=agent.id,
+            sender_role=MessageSenderRole.SYSTEM,
+            body=(
+                "Payment processed.\n\n"
+                f"Your booking agent received your payment of {amount}"
+                f"{pm} for {itin.title}.\n"
+                "They are now completing your reservations — tickets and "
+                "vouchers will arrive in this chat."
+                + (f"\n\nNote: {body.note}" if body.note else "")
+            ),
+            is_summary=False,
+            booking_id=row.id,
+        )
+        session.add(msg)
+        await session.flush()
+        await write_audit_log(
+            session,
+            actor_user_id=agent.id,
+            action="message.post",
+            target_kind="messages",
+            target_id=str(msg.id),
+            metadata={"sender_role": "system", "kind": "payment_confirmation"},
+            actor_kind=ActorKind.AGENT,
+        )
+
+    await session.commit()
+
+    # Out-of-app delivery: email + SMS, both honest when unconfigured.
+    delivery: dict[str, str] = {}
+    if owner is not None and itin is not None:
+        from app.clients.notify import notify_payment_received
+        delivery = notify_payment_received(
+            user_email=owner.email,
+            user_phone=getattr(owner, "phone", None),
+            itinerary_title=itin.title,
+            amount_cents=row.amount_cents,
+            currency=row.currency,
+            agent_note=body.note,
+        )
+
+    item = await _row_to_queue_item(session, row)
+    item.metadata = dict(item.metadata)
+    item.metadata["delivery"] = delivery
+    return item
+
+
 @router.post("/queue/{queue_id}/outcome", response_model=QueueItem)
 async def record_outcome(
     queue_id: UUID,
@@ -406,6 +578,17 @@ async def record_outcome(
             detail=f"cannot set outcome on a {row.status} item",
         )
 
+    # Agent-pay flow: a CONFIRMED booking requires the customer's payment
+    # to have been recorded first (pay → confirm — never confirm-then-bill).
+    if body.status == "confirmed" and getattr(row, "payment_status", "none") != "paid":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "record the customer's payment first (POST /agent/queue/{id}/payment) "
+                "before confirming — payment must be processed before tickets are issued"
+            ),
+        )
+
     row.status = body.status
     if body.amount_cents is not None:
         row.amount_cents = body.amount_cents
@@ -413,6 +596,8 @@ async def record_outcome(
         row.currency = body.currency.upper()
     if body.external_id:
         row.external_id = body.external_id
+    if body.commission_cents is not None:
+        row.commission_cents = body.commission_cents
     if body.note:
         row.outcome_note = body.note
     row.outcome_at = datetime.now(timezone.utc)
@@ -426,6 +611,8 @@ async def record_outcome(
         metadata={
             "amount_cents": row.amount_cents,
             "currency": row.currency,
+            "commission_cents": getattr(row, "commission_cents", 0),
+            "payment_status": getattr(row, "payment_status", "none"),
             "external_id": row.external_id,
             "note": body.note,
         },
@@ -478,6 +665,29 @@ async def record_outcome(
         except Exception as e:  # noqa: BLE001
             # The outcome stands; the summary post is best-effort.
             logger.warning("booking summary post failed for %s: %s", row.id, e)
+
+    # Out-of-app notification to the customer (email/SMS, honest skip
+    # when a channel is not configured).
+    try:
+        owner = (await session.execute(
+            select(User).where(User.id == row.user_id)
+        )).scalar_one_or_none()
+        itin = (await session.execute(
+            select(SavedItinerary).where(SavedItinerary.id == row.itinerary_id)
+        )).scalar_one_or_none() if row.itinerary_id else None
+        if owner is not None:
+            from app.clients.notify import notify_booking_outcome
+            delivery = notify_booking_outcome(
+                user_email=owner.email,
+                user_phone=getattr(owner, "phone", None),
+                itinerary_title=itin.title if itin else "your trip",
+                confirmed=body.status == "confirmed",
+                external_id=row.external_id,
+                summary_body=row.outcome_note,
+            )
+            logger.info("outcome delivery %s: %s", row.id, delivery)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("outcome notification failed for %s: %s", row.id, e)
 
     return await _row_to_queue_item(session, row)
 
