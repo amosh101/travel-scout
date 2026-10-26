@@ -110,4 +110,21 @@ curl -s -X POST "$API/api/messages" -H "Authorization: Bearer $TOK_AGENT" -H 'Co
   -o /tmp/msg2.json
 python3 -c "import json;d=json.load(open('/tmp/msg2.json'));print('agent message posted:', d.get('sender_role'))"
 
+# 6b) agent-side: claim -> record CUSTOMER payment (off-platform) -> outcome.
+# The queue dedupe returns the EXISTING open row for this itinerary; claim it.
+curl -s "$API/api/agent/queue?status=pending&limit=10" -H "Authorization: Bearer $TOK_AGENT" -o /tmp/q2.json
+QID2=$(python3 -c "import json;d=json.load(open('/tmp/q2.json'));items=[i for i in d['items'] if i.get('itinerary_id')=='$SID'];print(items[0]['id'] if items else '')")
+if [ -n "$QID2" ]; then
+  curl -s -X POST "$API/api/agent/queue/$QID2/claim" -H "Authorization: Bearer $TOK_AGENT" -o /tmp/claim2.json
+  python3 -c "import json;print('claim:', json.load(open('/tmp/claim2.json')).get('status'))"
+  curl -s -X POST "$API/api/agent/queue/$QID2/payment" -H "Authorization: Bearer $TOK_AGENT" -H 'Content-Type: application/json' \
+    -d '{"amount_cents": 125000, "currency": "GBP", "commission_cents": 12500, "method": "bank transfer", "note": "Deposit received from customer."}' \
+    -o /tmp/payment.json
+  python3 -c "import json;d=json.load(open('/tmp/payment.json'));print('payment:', d.get('payment_status'), '| row status:', d.get('status'), '| delivery:', json.dumps((d.get('metadata') or {}).get('delivery') or {}))"
+  curl -s -X POST "$API/api/agent/queue/$QID2/outcome" -H "Authorization: Bearer $TOK_AGENT" -H 'Content-Type: application/json' \
+    -d '{"status": "confirmed", "amount_cents": 125000, "currency": "GBP", "external_id": "RS-JAZZ-4NOV-2PAX", "commission_cents": 12500, "note": "Ronnie Scotts 4 Nov x2 + St John. E-tickets emailed."}' \
+    -o /tmp/outcome.json
+  python3 -c "import json;d=json.load(open('/tmp/outcome.json'));print('outcome:', d.get('status'), '| payment:', d.get('payment_status'), '| commission:', d.get('commission_cents'))"
+fi
+
 echo "SEEDING COMPLETE"
