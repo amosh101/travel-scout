@@ -14,6 +14,11 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Landing-page intake handoff: /auth/login?next=…&intent=<id>. Mirror the
+  // old onboarding login step — applying the visitor's pre-login selections
+  // to the account they sign in with. Best-effort: an expired or
+  // already-consumed intake is skipped (the intent is consumed one-shot).
+  const intent = sp?.get("intent") ?? "";
 
   // Already signed in: the form is redundant — say so and move on.
   if (token) {
@@ -54,6 +59,19 @@ function LoginForm() {
         body: { email, password },
       });
       setToken(res.access_token);
+      // Attach the visitor's pre-login search selections (see intent above)
+      // so the full results page they return to stays personalised off the
+      // stored profile too. Never blocks the login itself.
+      if (intent) {
+        try {
+          await apiFetch(
+            `/api/profile/intake/${encodeURIComponent(intent)}/apply`,
+            { method: "POST", accessToken: res.access_token },
+          );
+        } catch (applyErr) {
+          console.warn("intake apply failed:", applyErr);
+        }
+      }
       // Honour ?next= so the user lands back where they were (e.g. on
       // the itineraries page they were previewing before signup). Only
       // accept same-origin paths to prevent open-redirect abuse.

@@ -23,6 +23,9 @@ type QueueItem = {
   claimed_at: string | null;
   outcome_at: string | null;
   outcome_note: string | null;
+  payment_status: string;
+  paid_at: string | null;
+  commission_cents: number;
   created_at: string;
 };
 
@@ -41,6 +44,9 @@ export default function AdminQueuePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [outcomeDrafts, setOutcomeDrafts] = useState<Record<string, {
     status: string; amount: string; currency: string; external_id: string; note: string;
+  }>>({});
+  const [paymentDrafts, setPaymentDrafts] = useState<Record<string, {
+    amount: string; currency: string; method: string; note: string;
   }>>({});
 
   const load = useCallback(async () => {
@@ -136,6 +142,45 @@ export default function AdminQueuePage() {
       }));
     }
   };
+
+  // Agent-pay flow (2026-10-21): the customer pays the AGENT off-platform;
+  // the agent records it, the platform confirms to the customer in chat +
+  // email/SMS. Confirming an outcome requires a recorded payment.
+  const ensurePayDraft = (id: string) => {
+    if (!paymentDrafts[id]) {
+      setPaymentDrafts((p) => ({
+        ...p,
+        [id]: { amount: "", currency: "USD", method: "", note: "" },
+      }));
+    }
+  };
+
+  const recordPayment = async (id: string) => {
+    const d = paymentDrafts[id];
+    if (!d || !d.amount) return;
+    setBusy(id);
+    try {
+      const body: Record<string, unknown> = {
+        amount_cents: Math.round(parseFloat(d.amount) * 100),
+        currency: (d.currency || "USD").toUpperCase(),
+      };
+      if (d.method) body.method = d.method;
+      if (d.note) body.note = d.note;
+      await apiFetch(`/api/agent/queue/${id}/payment`, { method: "POST", body });
+      setPaymentDrafts((p) => {
+        const n = { ...p };
+        delete n[id];
+        return n;
+      });
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Payment failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const payDraftOf = (id: string) => paymentDrafts[id];
 
   return (
     <div className="space-y-6">
@@ -256,6 +301,24 @@ export default function AdminQueuePage() {
                             <span className="font-mono text-xs">{q.external_id}</span>
                           </span>
                         )}
+                        {q.commission_cents > 0 && (
+                          <span className="mr-3">
+                            <span className="text-muted-foreground">Commission: </span>
+                            <span className="font-mono">
+                              {formatAmount(q.commission_cents, q.currency)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {q.payment_status === "paid" && (
+                      <div className="mt-2 rounded border border-emerald-400/40 bg-emerald-500/10 px-2 py-1.5 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/5 dark:text-emerald-200">
+                        Payment received
+                        {q.paid_at && (
+                          <span className="ml-1 text-xs opacity-75">
+                            {new Date(q.paid_at).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     )}
                     {noteOf(q) && (
@@ -289,6 +352,14 @@ export default function AdminQueuePage() {
                     )}
                     {(q.status === "claimed" || q.status === "in_progress") && isMine && (
                       <>
+                        {q.payment_status !== "paid" && (
+                          <button
+                            onClick={() => ensurePayDraft(q.id)}
+                            className="rounded bg-sky-100 px-3 py-1 text-sm font-medium text-sky-900 transition hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-200"
+                          >
+                            Record payment
+                          </button>
+                        )}
                         <button
                           onClick={() => ensureDraft(q.id)}
                           className="rounded bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-900 transition hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200"
@@ -312,8 +383,102 @@ export default function AdminQueuePage() {
                   </div>
                 </div>
 
+                {paymentDrafts[q.id] && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Customer payment (off-platform) — the app confirms to them
+                    </div>
+                    <div className="mt-2 grid gap-3 md:grid-cols-4">
+                      <label className="flex flex-col text-xs text-muted-foreground">
+                        Amount
+                        <input
+                          value={paymentDrafts[q.id].amount}
+                          onChange={(e) =>
+                            setPaymentDrafts((p) => ({
+                              ...p,
+                              [q.id]: { ...p[q.id], amount: e.target.value },
+                            }))
+                          }
+                          placeholder="0.00"
+                          className="mt-1 rounded border border-border bg-background px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="flex flex-col text-xs text-muted-foreground">
+                        Currency
+                        <input
+                          value={paymentDrafts[q.id].currency}
+                          onChange={(e) =>
+                            setPaymentDrafts((p) => ({
+                              ...p,
+                              [q.id]: { ...p[q.id], currency: e.target.value },
+                            }))
+                          }
+                          maxLength={3}
+                          className="mt-1 rounded border border-border bg-background px-2 py-1 text-sm uppercase"
+                        />
+                      </label>
+                      <label className="flex flex-col text-xs text-muted-foreground">
+                        Method
+                        <input
+                          value={paymentDrafts[q.id].method}
+                          onChange={(e) =>
+                            setPaymentDrafts((p) => ({
+                              ...p,
+                              [q.id]: { ...p[q.id], method: e.target.value },
+                            }))
+                          }
+                          placeholder="e.g. M-Pesa, transfer, card"
+                          className="mt-1 rounded border border-border bg-background px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="flex flex-col text-xs text-muted-foreground">
+                        Note
+                        <input
+                          value={paymentDrafts[q.id].note}
+                          onChange={(e) =>
+                            setPaymentDrafts((p) => ({
+                              ...p,
+                              [q.id]: { ...p[q.id], note: e.target.value },
+                            }))
+                          }
+                          placeholder="optional"
+                          className="mt-1 rounded border border-border bg-background px-2 py-1 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        onClick={() =>
+                          setPaymentDrafts((p) => {
+                            const n = { ...p };
+                            delete n[q.id];
+                            return n;
+                          })
+                        }
+                        className="rounded border border-border bg-background px-3 py-1 text-sm transition hover:bg-muted"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => recordPayment(q.id)}
+                        disabled={busy === q.id}
+                        className="rounded bg-sky-600 px-3 py-1 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-50"
+                      >
+                        {busy === q.id ? "Recording…" : "Record payment"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {draft && (
                   <div className="mt-4 border-t border-border pt-4">
+                    {q.payment_status !== "paid" && draft.status === "confirmed" && (
+                      <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
+                        Confirming requires the customer&apos;s payment to be recorded
+                        first (use “Record payment”). For a failed booking choose
+                        failed below.
+                      </p>
+                    )}
                     <div className="grid gap-3 md:grid-cols-5">
                       <label className="flex flex-col text-xs text-muted-foreground">
                         Status

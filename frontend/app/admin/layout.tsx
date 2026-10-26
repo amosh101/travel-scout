@@ -38,9 +38,11 @@ const FULL_NAV: { href: string; label: string; perms: string[] }[] = [
   { href: "/admin/users", label: "Users", perms: ["user.read"] },
   { href: "/admin/weights", label: "Algo weights", perms: ["weights.update"] },
   { href: "/admin/sources", label: "Sources", perms: ["source.admin"] },
+  { href: "/admin/interests", label: "Interest catalog", perms: ["destination.admin"] },
   { href: "/admin/audit", label: "Audit log", perms: ["audit.read"] },
   { href: "/admin/queue", label: "Agent queue", perms: ["agent.work", "agent.assign"] },
   { href: "/admin/messages", label: "Conversations", perms: ["agent.work", "agent.assign", "itinerary.read_all"] },
+  { href: "/admin/reports", label: "Reports", perms: ["report.read", "agent.work"] },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

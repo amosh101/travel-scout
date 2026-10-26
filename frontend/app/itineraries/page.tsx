@@ -96,6 +96,23 @@ export default function ItinerariesPage() {
   const urlDestination = sp?.get("destination") ?? null;
   const urlDateFrom = sp?.get("date_from") ?? null;
   const urlDateTo = sp?.get("date_to") ?? null;
+  // Full-results handoff (2026-10-22): the onboarding redirect here carries
+  // the same origin/interests the anonymous preview was personalised with —
+  // pass them through so the full page rebuilds the SAME build (the backend
+  // honours ?interests= for anonymous callers, and for signed-in callers
+  // whose stored profile has no interests). ?intent= rides along only so
+  // the sign-up below can still attach the selections.
+  const urlInterests = sp?.get("interests") ?? null;
+  const urlOrigin = sp?.get("origin") ?? null;
+  const urlIntent = sp?.get("intent") ?? null;
+  // Auth deep links must carry the FULL search (encoded) — a bare
+  // next=/itineraries?destination=X&date_from=Y&… breaks apart at the
+  // first & because the query is parsed top-level, losing every param
+  // after it. Encoded in one piece, plus the intake id when present.
+  const authNext = `/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`;
+  const authQuery = `next=${encodeURIComponent(authNext)}${
+    urlIntent ? `&intent=${encodeURIComponent(urlIntent)}` : ""
+  }`;
 
   useEffect(() => {
     // Do NOT gate on token. The user wants to see the results first,
@@ -124,6 +141,8 @@ export default function ItinerariesPage() {
         if (urlDestination) params.set("destination", urlDestination);
         if (urlDateFrom) params.set("date_from", urlDateFrom);
         if (urlDateTo) params.set("date_to", urlDateTo);
+        if (urlOrigin) params.set("origin", urlOrigin);
+        if (urlInterests) params.set("interests", urlInterests);
         const qs = params.toString();
         const res = await apiFetch<DiscoverResponse>(
           `/api/itineraries/discover${qs ? `?${qs}` : ""}`,
@@ -173,8 +192,9 @@ export default function ItinerariesPage() {
     if (!token) {
       // Anonymous: the results are already visible; tell the user
       // that saving requires a free account. Don't redirect — they
-      // were just told to look at the results first.
-      router.push(`/auth/login?next=/itineraries?destination=${encodeURIComponent(data?.anchors.destination_override ?? r.destination)}`);
+      // were just told to look at the results first. The login link
+      // carries the full search + intake id (authQuery).
+      router.push(`/auth/login?${authQuery}`);
       return;
     }
     setSavingRank(r.rank);
@@ -633,13 +653,13 @@ export default function ItinerariesPage() {
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link
-              href={`/auth/login?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              href={`/auth/login?${authQuery}`}
               className="rounded-md bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-2 text-sm font-semibold text-background"
             >
               Log in — save your trips
             </Link>
             <Link
-              href={`/auth/register?next=/itineraries${sp?.toString() ? `?${sp.toString()}` : ""}`}
+              href={`/auth/register?${authQuery}`}
               className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
             >
               Sign up — it’s free

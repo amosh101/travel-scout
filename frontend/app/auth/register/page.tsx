@@ -15,6 +15,13 @@ function RegisterForm() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  // Landing-page intake handoff: /auth/register?next=…&intent=<id>. The
+  // selections the visitor picked on the home page attach to the NEW account
+  // at registration (backend consumes the intent one-time). Intents live in
+  // Redis for 1 hour — a stale one must NOT block signup, hence the 410
+  // retry below without it.
+  const intent = sp?.get("intent") ?? "";
 
   // Already signed in: the form is redundant — say so and move on.
   // (On /auth/* the global AuthNav is hidden, so this page carries its
@@ -47,14 +54,34 @@ function RegisterForm() {
     e.preventDefault();
     setBusy(true);
     setErr(null);
-    try {
-      const res = await apiFetch<{
+    setNote(null);
+    const attempt = (withIntake: boolean) =>
+      apiFetch<{
         access_token: string;
         user: { id: string; email: string };
       }>("/api/auth/register", {
         method: "POST",
-        body: { email, password, name },
+        body: {
+          email,
+          password,
+          name,
+          ...(withIntake && intent ? { intake_id: intent } : {}),
+        },
       });
+    let res: { access_token: string; user: { id: string; email: string } };
+    try {
+      try {
+        res = await attempt(true);
+      } catch (e) {
+        // The intake lives only 1 hour (Redis). A 410 means it expired —
+        // the backend rejects BEFORE creating any user row, so retrying
+        // without the intake is safe and signup still succeeds.
+        if (!(e instanceof ApiError) || e.status !== 410 || !intent) throw e;
+        setNote(
+          "Your search selections expired before signup, so they weren't attached to this account — redo your search on the home page anytime.",
+        );
+        res = await attempt(false);
+      }
       setToken(res.access_token);
       // Honour ?next= so the user lands back where they were. Only
       // accept same-origin paths to prevent open-redirect abuse.
@@ -127,6 +154,7 @@ function RegisterForm() {
           />
         </div>
         {err && <p className="text-sm text-red-600">{err}</p>}
+        {note && <p className="text-xs text-muted-foreground">{note}</p>}
         <button
           type="submit"
           disabled={busy}

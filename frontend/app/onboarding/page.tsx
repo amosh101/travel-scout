@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth-context";
 
@@ -181,8 +180,13 @@ function OnboardingInner() {
   // was actually running in the background, and the intake contract
   // has no completion flag (the build only happens after registration
   // applies the profile). Two passes:
-  //   1. destination pass — discover with the picked destination,
-  //      personalised when interests were picked;
+  //   1. destination pass — discover with the picked destination; on
+  //      success the visitor is redirected STRAIGHT to the full
+  //      itineraries page (2026-10-22, Sir: no intermediary preview,
+  //      no secondary "open full results" button). The URL carries
+  //      origin + window + interests + the intake id so the full page
+  //      rebuilds the same personalised results and registration still
+  //      attaches the selections.
   //   2. interest-anchored pass — events seeded from the real season
   //      calendar when no destination was picked OR the destination
   //      pass came back empty. The visitor always sees actual results.
@@ -196,7 +200,10 @@ function OnboardingInner() {
   const [previewErr, setPreviewErr] = useState<string | null>(null);
 
   useEffect(() => {
-  if (!intake) return;
+  // Signed-in visitors are handled by the T9 effect above. Running the
+  // anonymous build for them would only fire a wasted discover call
+  // (and race their apply-and-redirect navigation).
+  if (!intake || token) return;
   const dest = intake.destinations[0] || null;
   // The discover contract takes CATALOG KEYS (the interests table's
   // key column) — Wikidata/Wikipedia route SPARQL on them. The
@@ -212,24 +219,25 @@ function OnboardingInner() {
     if (intake.origin) common.set("origin", intake.origin);
     if (intake.date_from) common.set("date_from", intake.date_from);
     if (intake.date_to) common.set("date_to", intake.date_to);
-    const settle = (r: PreviewResult[], mode: "dest" | "interest") => {
-      setPreview(r);
-      setPreviewMode(mode);
-      setPreviewState("ready");
-    };
     (async () => {
       if (dest) {
         const qs = new URLSearchParams(common);
         qs.set("destination", dest);
-        qs.set("top_n", "3");
         if (interestKeys.length) qs.set("interests", interestKeys.join(","));
         try {
           const res = await apiFetch<{ results: PreviewResult[] }>(
             `/api/itineraries/discover?${qs.toString()}`,
           );
+          const results = res.results ?? [];
           if (cancelled) return;
-          if ((res.results ?? []).length > 0) {
-            settle(res.results ?? [], "dest");
+          if (results.length > 0) {
+            // Straight to the full results (2026-10-22, Sir): the URL
+            // carries destination + window + origin + interests + the
+            // intake id, so the full page rebuilds the same personalised
+            // build (warm caches → fast) and the sign-up there can still
+            // attach the selections via intake_id.
+            qs.set("intent", intentId);
+            router.replace(`/itineraries?${qs.toString()}`);
             return;
           }
         } catch {
@@ -244,7 +252,11 @@ function OnboardingInner() {
           const res = await apiFetch<{ results: PreviewResult[] }>(
             `/api/itineraries/discover?${qs.toString()}`,
           );
-          if (!cancelled) settle(res.results ?? [], "interest");
+          if (!cancelled) {
+            setPreview(res.results ?? []);
+            setPreviewMode("interest");
+            setPreviewState("ready");
+          }
         } catch (e) {
           if (!cancelled) {
             setPreviewErr(
@@ -268,7 +280,7 @@ function OnboardingInner() {
     return () => {
       cancelled = true;
     };
-  }, [intake, interests]);
+  }, [intake, interests, token, intentId, router]);
 
   const pickedNames = intake
     ? interests
@@ -471,18 +483,11 @@ function OnboardingInner() {
                     );
                   })}
                 </ul>
-                {previewMode === "dest" && (
-                  <Link
-                    href={`/itineraries?destination=${encodeURIComponent(
-                      intake?.destinations[0] ?? "",
-                    )}${intake?.date_from ? `&date_from=${intake.date_from}` : ""}${
-                      intake?.date_to ? `&date_to=${intake.date_to}` : ""
-                    }`}
-                    className="inline-block rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-                  >
-                    Open your full results →
-                  </Link>
-                )}
+                {/* 2026-10-22 (Sir): the destination-mode "Open your full
+                    results" intermediary is gone — those visitors are
+                    redirected straight to /itineraries during the build.
+                    Only the interest-anchored fallback (no destination) or
+                    an empty window still renders here. */}
                 {previewMode === "interest" && (
                   <p className="text-sm text-muted-foreground">
                     Select the trip you want and we&apos;ll hold it to your

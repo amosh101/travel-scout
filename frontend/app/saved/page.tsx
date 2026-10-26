@@ -81,6 +81,27 @@ type ListResponse = {
   items: Itinerary[];
 };
 
+type DigestItem = {
+  title: string;
+  destination: string | null;
+  start: string;
+  end: string;
+  why: string;
+};
+
+type DigestData = {
+  id: string;
+  week_of: string;
+  window: { date_from?: string; date_to?: string };
+  payload: DigestItem[];
+  email_status: string;
+};
+
+type DigestResponse = {
+  optout: boolean;
+  items: DigestData[];
+};
+
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", {
     year: "numeric",
@@ -197,6 +218,8 @@ export default function SavedPage() {
   const [err, setErr] = useState<string | null>(null);
   const [handoffState, setHandoffState] = useState<Record<string, "idle" | "busy" | "ok" | "err">>({});
   const [handoffMsg, setHandoffMsg] = useState<Record<string, string>>({});
+  // Weekly auto-digest (in-app copy of what also goes out by email).
+  const [digest, setDigest] = useState<DigestData | null>(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -211,6 +234,14 @@ export default function SavedPage() {
       try {
         const res = await apiFetch<ListResponse>("/api/itineraries");
         if (!cancelled) setData(res);
+        // Digest fetch is best-effort — 401 from a dead token self-heals
+        // in this same catch path; anything else just hides the section.
+        try {
+          const d = await apiFetch<DigestResponse>("/api/me/digests");
+          if (!cancelled && d.items?.length) setDigest(d.items[0]);
+        } catch {
+          /* digests arrive weekly; no digest yet is normal */
+        }
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
           setToken(null);
@@ -295,10 +326,47 @@ export default function SavedPage() {
         </div>
       </div>
 
+      {digest && digest.payload?.length > 0 && (
+        <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-lg font-semibold">
+              This week&rsquo;s trips for you
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              week of {digest.week_of} · built from your interests
+              {digest.email_status === "sent" && " · emailed to you"}
+              {digest.email_status.startsWith("skipped") && " · email delivery not configured"}
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {digest.payload.map((d, i) => (
+              <li
+                key={i}
+                className="rounded-lg border border-border/40 bg-card p-3 text-sm"
+              >
+                <div className="font-medium">{d.title || d.destination}</div>
+                <div className="mt-0.5 text-muted-foreground">
+                  {d.start} → {d.end}
+                  {d.why && <> · {d.why}</>}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex gap-2 text-xs">
+            <Link href="/itineraries" className="underline hover:no-underline">
+              Build one of these →
+            </Link>
+            <Link href="/pricing" className="underline hover:no-underline">
+              Plans
+            </Link>
+          </div>
+        </div>
+      )}
+
       <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-        MVP note: bookings go to Google Flights, Skyscanner, Booking.com, or
-        the event&rsquo;s own site. Travel-Scout doesn&rsquo;t take a
-        commission yet.
+        Booking payments: hand a trip to your booking agent and pay them
+        directly; the app confirms the payment and the agent delivers your
+        reservations and tickets. Subscriptions on the Plans page.
       </p>
 
       {loading && <p className="text-muted-foreground">Loading…</p>}

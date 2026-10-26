@@ -54,9 +54,14 @@ export function AuthNav() {
         >
           Travel Scout
         </Link>
-        <Link href="/auth/login" className={_PILL}>
-          Sign in
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/privacy" className="text-xs text-white/70 hover:text-white">
+            Privacy
+          </Link>
+          <Link href="/auth/login" className={_PILL}>
+            Sign in
+          </Link>
+        </div>
       </header>
     );
   }
@@ -76,6 +81,12 @@ export function AuthNav() {
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Link href="/itineraries" className={_PILL}>
           My saved trips
+        </Link>
+        <Link
+          href="/privacy"
+          className="hidden text-xs text-white/70 hover:text-white sm:inline"
+        >
+          Privacy
         </Link>
         {isAgent && (
           <Link href="/admin/queue" className={_PILL}>
