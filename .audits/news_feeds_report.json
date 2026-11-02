@@ -1,0 +1,749 @@
+{
+ "Vienna": {
+  "city": "Vienna",
+  "feeds": [
+   {
+    "outlet": "ORF Wien",
+    "url": "https://rss.orf.at/wien.xml",
+    "ok": true,
+    "items": 18,
+    "note": null
+   },
+   {
+    "outlet": "ORF Wien",
+    "url": "https://rss.orf.at/wien.xml",
+    "ok": true,
+    "items": 18,
+    "note": null
+   }
+  ]
+ },
+ "Shanghai": {
+  "city": "Shanghai",
+  "feeds": [
+   {
+    "outlet": "Shine/Shanghai Daily",
+    "url": "https://www.shine.cn/rss/all.xml",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "Shine/Shanghai Daily",
+    "url": "https://www.shine.cn/rss/citylink.xml",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   }
+  ]
+ },
+ "Prague": {
+  "city": "Prague",
+  "feeds": [
+   {
+    "outlet": "The Prague Monitor",
+    "url": "https://www.praguemonitor.com/feed/",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "The Prague Monitor",
+    "url": "https://www.praguemonitor.com/feed",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Radio Prague International",
+    "url": "https://english.radio.cz/rss/latest-news",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Radio Prague International",
+    "url": "https://english.radio.cz/rss.xml",
+    "ok": true,
+    "items": 10,
+    "note": null
+   },
+   {
+    "outlet": "Radio Prague International",
+    "url": "https://english.radio.cz/rss.xml",
+    "ok": true,
+    "items": 10,
+    "note": null
+   }
+  ]
+ },
+ "Copenhagen": {
+  "city": "Copenhagen",
+  "feeds": [
+   {
+    "outlet": "The Copenhagen Post",
+    "url": "https://cphpost.dk/feed/",
+    "ok": false,
+    "note": "RemoteDisconnected"
+   },
+   {
+    "outlet": "The Copenhagen Post",
+    "url": "https://cphpost.dk/feed",
+    "ok": false,
+    "note": "RemoteDisconnected"
+   }
+  ]
+ },
+ "Cairo": {
+  "city": "Cairo",
+  "feeds": [
+   {
+    "outlet": "Egypt Today",
+    "url": "https://www.egypttoday.com/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Daily News Egypt",
+    "url": "https://www.dailynewsegypt.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   },
+   {
+    "outlet": "Daily News Egypt",
+    "url": "https://www.dailynewsegypt.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   }
+  ]
+ },
+ "Paris": {
+  "city": "Paris",
+  "feeds": [
+   {
+    "outlet": "Le Parisien",
+    "url": "https://www.leparisien.fr/arc/outboundfeeds/rss/?outputType=xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "France24 Paris",
+    "url": "https://www.france24.com/fr/rss",
+    "ok": true,
+    "items": 24,
+    "note": null
+   },
+   {
+    "outlet": "France24 Paris",
+    "url": "https://www.france24.com/fr/rss",
+    "ok": true,
+    "items": 24,
+    "note": null
+   }
+  ]
+ },
+ "Berlin": {
+  "city": "Berlin",
+  "feeds": [
+   {
+    "outlet": "Tagesspiegel",
+    "url": "https://www.tagesspiegel.de/contentexport/rss/home",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Tagesspiegel",
+    "url": "https://www.tagesspiegel.de/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "DW Berlin",
+    "url": "https://rss.dw.com/rdf/rss-en-ger",
+    "ok": true,
+    "items": 8,
+    "note": null
+   },
+   {
+    "outlet": "DW Berlin",
+    "url": "https://rss.dw.com/rdf/rss-en-ger",
+    "ok": true,
+    "items": 8,
+    "note": null
+   }
+  ]
+ },
+ "Munich": {
+  "city": "Munich",
+  "feeds": [
+   {
+    "outlet": "S\u00fcddeutsche",
+    "url": "https://rss.sueddeutsche.de/app/service/rss/alles/index.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Merkur",
+    "url": "https://www.merkur.de/rss/feed.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Merkur",
+    "url": "https://www.merkur.de/feed/",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Athens": {
+  "city": "Athens",
+  "feeds": [
+   {
+    "outlet": "Kathimerini English",
+    "url": "https://www.ekathimerini.com/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Kathimerini English",
+    "url": "https://www.ekathimerini.com/rss.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Greek Reporter",
+    "url": "https://greekreporter.com/feed/",
+    "ok": true,
+    "items": 20,
+    "note": null
+   },
+   {
+    "outlet": "Greek Reporter",
+    "url": "https://greekreporter.com/feed/",
+    "ok": true,
+    "items": 20,
+    "note": null
+   }
+  ]
+ },
+ "Hong Kong": {
+  "city": "Hong Kong",
+  "feeds": [
+   {
+    "outlet": "SCMP Hong Kong",
+    "url": "https://www.scmp.com/rss/91/feed",
+    "ok": true,
+    "items": 50,
+    "note": null
+   },
+   {
+    "outlet": "SCMP Hong Kong",
+    "url": "https://www.scmp.com/rss/91/feed",
+    "ok": true,
+    "items": 50,
+    "note": null
+   }
+  ]
+ },
+ "Budapest": {
+  "city": "Budapest",
+  "feeds": [
+   {
+    "outlet": "We Love Budapest",
+    "url": "https://welovebudapest.com/en/rss",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "Telex",
+    "url": "https://telex.hu/rss",
+    "ok": true,
+    "items": 50,
+    "note": null
+   },
+   {
+    "outlet": "Telex",
+    "url": "https://telex.hu/rss",
+    "ok": true,
+    "items": 50,
+    "note": null
+   }
+  ]
+ },
+ "Florence": {
+  "city": "Florence",
+  "feeds": [
+   {
+    "outlet": "La Nazione Firenze",
+    "url": "https://www.lanazione.it/rss/firenze.xml",
+    "ok": true,
+    "items": 100,
+    "note": null
+   },
+   {
+    "outlet": "La Nazione Firenze",
+    "url": "https://www.lanazione.it/rss/firenze.xml",
+    "ok": true,
+    "items": 100,
+    "note": null
+   }
+  ]
+ },
+ "Milan": {
+  "city": "Milan",
+  "feeds": [
+   {
+    "outlet": "MilanoToday",
+    "url": "https://www.milanotoday.it/rss/",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Corriere Milano",
+    "url": "https://xml2.corriereobjects.it/rss/milano.xml",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Rome": {
+  "city": "Rome",
+  "feeds": [
+   {
+    "outlet": "RomaToday",
+    "url": "https://www.romatoday.it/rss/",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Corriere Roma",
+    "url": "https://xml2.corriereobjects.it/rss/roma.xml",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Tokyo": {
+  "city": "Tokyo",
+  "feeds": [
+   {
+    "outlet": "Japan Times",
+    "url": "https://www.japantimes.co.jp/feed/",
+    "ok": true,
+    "items": 30,
+    "note": null
+   },
+   {
+    "outlet": "Japan Times",
+    "url": "https://www.japantimes.co.jp/feed/",
+    "ok": true,
+    "items": 30,
+    "note": null
+   }
+  ]
+ },
+ "Nairobi": {
+  "city": "Nairobi",
+  "feeds": [
+   {
+    "outlet": "Nation Africa",
+    "url": "https://nation.africa/kenya/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Nation Africa",
+    "url": "https://www.nation.africa/kenya/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Standard KE",
+    "url": "https://www.standardmedia.co.ke/rss/kenya.php",
+    "ok": true,
+    "items": 30,
+    "note": null
+   },
+   {
+    "outlet": "Standard KE",
+    "url": "https://www.standardmedia.co.ke/rss/kenya.php",
+    "ok": true,
+    "items": 30,
+    "note": null
+   }
+  ]
+ },
+ "Marrakech": {
+  "city": "Marrakech",
+  "feeds": [
+   {
+    "outlet": "Morocco World News",
+    "url": "https://www.moroccoworldnews.com/feed/",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Morocco World News",
+    "url": "https://moroccoworldnews.com/feed/",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Morocco Today",
+    "url": "https://morocconewsline.com/feed/",
+    "ok": true,
+    "items": 4,
+    "note": null
+   },
+   {
+    "outlet": "Morocco Today",
+    "url": "https://morocconewsline.com/feed/",
+    "ok": true,
+    "items": 4,
+    "note": null
+   }
+  ]
+ },
+ "Maputo": {
+  "city": "Maputo",
+  "feeds": [
+   {
+    "outlet": "Club of Mozambique",
+    "url": "https://clubofmozambique.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   },
+   {
+    "outlet": "Club of Mozambique",
+    "url": "https://clubofmozambique.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   }
+  ]
+ },
+ "Amsterdam": {
+  "city": "Amsterdam",
+  "feeds": [
+   {
+    "outlet": "NL Times",
+    "url": "https://nltimes.nl/rss.xml",
+    "ok": true,
+    "items": 10,
+    "note": null
+   },
+   {
+    "outlet": "NL Times",
+    "url": "https://nltimes.nl/rss.xml",
+    "ok": true,
+    "items": 10,
+    "note": null
+   }
+  ]
+ },
+ "Lisbon": {
+  "city": "Lisbon",
+  "feeds": [
+   {
+    "outlet": "Observador",
+    "url": "https://observador.pt/rss/geral.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Portugal Resident",
+    "url": "https://www.portugalresident.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   },
+   {
+    "outlet": "Portugal Resident",
+    "url": "https://www.portugalresident.com/feed/",
+    "ok": true,
+    "items": 10,
+    "note": null
+   }
+  ]
+ },
+ "Singapore": {
+  "city": "Singapore",
+  "feeds": [
+   {
+    "outlet": "CNA Singapore",
+    "url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?category=6408",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "Straits Times",
+    "url": "https://www.straitstimes.com/news/singapore/rss.xml",
+    "ok": true,
+    "items": 43,
+    "note": null
+   },
+   {
+    "outlet": "Straits Times",
+    "url": "https://www.straitstimes.com/news/singapore/rss.xml",
+    "ok": true,
+    "items": 43,
+    "note": null
+   }
+  ]
+ },
+ "Cape Town": {
+  "city": "Cape Town",
+  "feeds": [
+   {
+    "outlet": "The South African CPT",
+    "url": "https://www.thesouthafrican.com/cape-town/feed/",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "Daily Maverick",
+    "url": "https://www.dailymaverick.co.za/dmrss/",
+    "ok": true,
+    "items": 53,
+    "note": null
+   },
+   {
+    "outlet": "Daily Maverick",
+    "url": "https://www.dailymaverick.co.za/dmrss/",
+    "ok": true,
+    "items": 53,
+    "note": null
+   }
+  ]
+ },
+ "Johannesburg": {
+  "city": "Johannesburg",
+  "feeds": [
+   {
+    "outlet": "The South African JHB",
+    "url": "https://www.thesouthafrican.com/joburg/feed/",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "TimesLIVE",
+    "url": "https://www.timeslive.co.za/rss/",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Seoul": {
+  "city": "Seoul",
+  "feeds": [
+   {
+    "outlet": "Korea Herald",
+    "url": "http://www.koreaherald.com/common/rss_xml.php?ct=103",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "Korea Times Seoul",
+    "url": "https://www.koreatimes.co.kr/www/rss/rss.xml",
+    "ok": true,
+    "items": 87,
+    "note": null
+   },
+   {
+    "outlet": "Korea Times Seoul",
+    "url": "https://www.koreatimes.co.kr/www/rss/rss.xml",
+    "ok": true,
+    "items": 87,
+    "note": null
+   }
+  ]
+ },
+ "Barcelona": {
+  "city": "Barcelona",
+  "feeds": [
+   {
+    "outlet": "Vilaweb",
+    "url": "https://www.vilaweb.cat/rss",
+    "ok": true,
+    "items": 25,
+    "note": null
+   },
+   {
+    "outlet": "Vilaweb",
+    "url": "https://www.vilaweb.cat/rss",
+    "ok": true,
+    "items": 25,
+    "note": null
+   }
+  ]
+ },
+ "Madrid": {
+  "city": "Madrid",
+  "feeds": [
+   {
+    "outlet": "ABC Madrid",
+    "url": "https://www.abc.es/rss/2.0/madrid/",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   },
+   {
+    "outlet": "El Mundo Madrid",
+    "url": "https://www.elmundo.es/rss/madrid.xml",
+    "ok": true,
+    "items": 47,
+    "note": null
+   },
+   {
+    "outlet": "El Mundo Madrid",
+    "url": "https://www.elmundo.es/rss/madrid.xml",
+    "ok": true,
+    "items": 47,
+    "note": null
+   }
+  ]
+ },
+ "Geneva": {
+  "city": "Geneva",
+  "feeds": [
+   {
+    "outlet": "Swissinfo Eng",
+    "url": "https://www.swissinfo.ch/eng/rss/latest-news.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Swissinfo Eng",
+    "url": "https://www.swissinfo.ch/eng/rss/latestnews.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Tribune de Gen\u00e8ve",
+    "url": "https://www.tdg.ch/rss.xml",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Zurich": {
+  "city": "Zurich",
+  "feeds": [
+   {
+    "outlet": "NZZ",
+    "url": "https://www.nzz.ch/rss.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Tages Anzeiger",
+    "url": "https://www.tagesanzeiger.ch/rss.xml",
+    "ok": false,
+    "note": "HTTPError"
+   }
+  ]
+ },
+ "Bangkok": {
+  "city": "Bangkok",
+  "feeds": [
+   {
+    "outlet": "Bangkok Post",
+    "url": "https://www.bangkokpost.com/rss/data/headlines.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Bangkok Post",
+    "url": "https://www.bangkokpost.com/rss/data/mostRecent.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "The Nation TH",
+    "url": "https://www.nationthailand.com/rss",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   }
+  ]
+ },
+ "Abu Dhabi": {
+  "city": "Abu Dhabi",
+  "feeds": [
+   {
+    "outlet": "The National",
+    "url": "https://www.thenationalnews.com/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "The National",
+    "url": "https://www.thenationalnews.com/rss.xml",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "WAM",
+    "url": "https://wam.ae/en/rss.xml",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   }
+  ]
+ },
+ "Dubai": {
+  "city": "Dubai",
+  "feeds": [
+   {
+    "outlet": "Gulf News",
+    "url": "https://gulfnews.com/rss?generatorName=uae",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Gulf News",
+    "url": "https://gulfnews.com/rss/uae",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Khaleej Times",
+    "url": "https://www.khaleejtimes.com/rss",
+    "ok": false,
+    "note": "HTTPError"
+   },
+   {
+    "outlet": "Khaleej Times",
+    "url": "https://www.khaleejtimes.com/rss.xml",
+    "ok": false,
+    "items": 0,
+    "note": "no items"
+   }
+  ]
+ },
+ "London": {
+  "city": "London",
+  "feeds": [
+   {
+    "outlet": "BBC London",
+    "url": "http://feeds.bbci.co.uk/news/england/london/rss.xml",
+    "ok": true,
+    "items": 29,
+    "note": null
+   },
+   {
+    "outlet": "BBC London",
+    "url": "http://feeds.bbci.co.uk/news/england/london/rss.xml",
+    "ok": true,
+    "items": 29,
+    "note": null
+   }
+  ]
+ }
+}
